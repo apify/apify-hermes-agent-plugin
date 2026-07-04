@@ -15,6 +15,26 @@ def env_path(tmp_path, monkeypatch):
     return tmp_path / ".env"
 
 
+@pytest.fixture(autouse=True)
+def _mock_hermes_cli_internals(monkeypatch):
+    """By default, stub the hermes_cli internals _enable_apify_toolset_for_cli
+    reaches into, so tests never touch the real ~/.hermes/config.yaml.
+
+    Patched at the source (hermes_cli.config / hermes_cli.tools_config)
+    rather than on our own wrapper function — tests that exercise the
+    wrapper itself need the real wrapper, just with safe internals.
+    """
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._get_platform_tools",
+        lambda config, platform: set(),
+    )
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._save_platform_tools",
+        lambda config, platform, enabled: None,
+    )
+
+
 def test_register_cli_adds_token_argument():
     from apify_hermes_agent_plugin.cli import register_cli
     parser = argparse.ArgumentParser()
@@ -111,3 +131,63 @@ def test_write_env_var_sets_restrictive_permissions(env_path, monkeypatch):
 
     mode = env_path.stat().st_mode & 0o777
     assert mode == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Toolset auto-enable
+# ---------------------------------------------------------------------------
+
+def test_setup_command_enables_apify_toolset_for_cli(env_path, monkeypatch):
+    saved = {}
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._save_platform_tools",
+        lambda config, platform, enabled: saved.update(platform=platform, enabled=enabled),
+    )
+
+    from apify_hermes_agent_plugin.cli import apify_setup_command
+    args = argparse.Namespace(token="tok")
+    rc = apify_setup_command(args)
+
+    assert rc == 0
+    assert saved["platform"] == "cli"
+    assert "apify" in saved["enabled"]
+
+
+def test_setup_command_succeeds_even_if_toolset_enable_raises(env_path, monkeypatch, capsys):
+    def _boom():
+        raise RuntimeError("hermes_cli internals changed")
+
+    monkeypatch.setattr("hermes_cli.config.load_config", _boom)
+
+    from apify_hermes_agent_plugin.cli import apify_setup_command
+    args = argparse.Namespace(token="tok")
+    rc = apify_setup_command(args)
+
+    assert rc == 0
+    assert env_path.read_text() == "APIFY_API_TOKEN=tok\n"
+    assert "hermes tools" in capsys.readouterr().out
+
+
+def test_enable_apify_toolset_for_cli_merges_with_existing_and_saves(monkeypatch):
+    fake_config = {"marker": "config"}
+    saved = {}
+
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: fake_config)
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._get_platform_tools",
+        lambda config, platform: {"web_search"} if platform == "cli" else set(),
+    )
+
+    def _fake_save(config, platform, enabled):
+        saved["config"] = config
+        saved["platform"] = platform
+        saved["enabled"] = enabled
+
+    monkeypatch.setattr("hermes_cli.tools_config._save_platform_tools", _fake_save)
+
+    from apify_hermes_agent_plugin.cli import _enable_apify_toolset_for_cli
+    _enable_apify_toolset_for_cli()
+
+    assert saved["config"] is fake_config
+    assert saved["platform"] == "cli"
+    assert saved["enabled"] == {"web_search", "apify"}

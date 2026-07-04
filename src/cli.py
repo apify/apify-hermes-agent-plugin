@@ -42,8 +42,33 @@ def apify_setup_command(args: argparse.Namespace) -> int:
 
     _write_env_var(_ENV_KEY, token)
     print(f"Saved {_ENV_KEY} to {get_hermes_home() / '.env'}")
-    print("Run `hermes tools` to enable the Apify Actors toolset if you haven't already.")
+
+    try:
+        _enable_apify_toolset_for_cli()
+        print("Enabled the Apify Actors toolset for the CLI.")
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not auto-enable the Apify Actors toolset ({exc}).")
+        print("Run `hermes tools` and enable it manually.")
+
     return 0
+
+
+def _enable_apify_toolset_for_cli() -> None:
+    """Add "apify" to the set of toolsets enabled for the "cli" platform.
+
+    Reuses hermes-agent's own config read/merge/save logic (rather than
+    reimplementing it) since it has non-obvious invariants — reconciling
+    agent.disabled_toolsets, preserving MCP server entries, plugin-toolset
+    bookkeeping. These are private hermes_cli internals with no stability
+    guarantee; callers should treat failure here as non-fatal.
+    """
+    from hermes_cli.config import load_config
+    from hermes_cli.tools_config import _get_platform_tools, _save_platform_tools
+
+    config = load_config()
+    enabled = _get_platform_tools(config, "cli")
+    enabled.add("apify")
+    _save_platform_tools(config, "cli", enabled)
 
 
 def _write_env_var(key: str, value: str) -> None:
