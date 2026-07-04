@@ -6,25 +6,20 @@ import argparse
 import pytest
 
 
-@pytest.fixture
-def env_path(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "apify_hermes_agent_plugin.cli.get_hermes_home",
-        lambda: tmp_path,
-    )
-    return tmp_path / ".env"
-
-
 @pytest.fixture(autouse=True)
 def _mock_hermes_cli_internals(monkeypatch):
-    """By default, stub the hermes_cli internals _enable_apify_toolset_for_cli
-    reaches into, so tests never touch the real ~/.hermes/config.yaml.
+    """By default, stub all hermes_cli internals this module reaches into,
+    so tests never touch the real ~/.hermes/config.yaml or ~/.hermes/.env.
 
     Patched at the source (hermes_cli.config / hermes_cli.tools_config)
-    rather than on our own wrapper function — tests that exercise the
+    rather than on our own wrapper functions — tests that exercise a
     wrapper itself need the real wrapper, just with safe internals.
     """
     monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
+    monkeypatch.setattr("hermes_cli.config.save_env_value", lambda key, value: None)
+    monkeypatch.setattr(
+        "hermes_cli.tools_config.PLATFORMS", {"cli": {"default_toolset": "hermes-cli"}}
+    )
     monkeypatch.setattr(
         "hermes_cli.tools_config._get_platform_tools",
         lambda config, platform: set(),
@@ -51,11 +46,20 @@ def test_register_cli_token_optional():
     assert args.token is None
 
 
-def test_setup_command_with_token_flag_writes_env_and_skips_prompt(env_path, monkeypatch):
+# ---------------------------------------------------------------------------
+# apify_setup_command — token handling
+# ---------------------------------------------------------------------------
+
+def test_setup_command_with_token_flag_writes_env_and_skips_prompt(monkeypatch):
     prompted = []
     monkeypatch.setattr(
         "apify_hermes_agent_plugin.cli.getpass.getpass",
         lambda *a, **k: prompted.append(True) or "should-not-be-used",
+    )
+    saved = {}
+    monkeypatch.setattr(
+        "hermes_cli.config.save_env_value",
+        lambda key, value: saved.update(key=key, value=value),
     )
 
     from apify_hermes_agent_plugin.cli import apify_setup_command
@@ -64,80 +68,80 @@ def test_setup_command_with_token_flag_writes_env_and_skips_prompt(env_path, mon
 
     assert rc == 0
     assert not prompted
-    assert env_path.read_text() == "APIFY_API_TOKEN=tok_from_flag\n"
+    assert saved == {"key": "APIFY_API_TOKEN", "value": "tok_from_flag"}
 
 
-def test_setup_command_prompts_when_no_token_flag(env_path, monkeypatch):
+def test_setup_command_prompts_when_no_token_flag(monkeypatch):
     monkeypatch.setattr(
         "apify_hermes_agent_plugin.cli.getpass.getpass",
         lambda *a, **k: "tok_from_prompt",
     )
-
-    from apify_hermes_agent_plugin.cli import apify_setup_command
-    args = argparse.Namespace(token=None)
-    rc = apify_setup_command(args)
-
-    assert rc == 0
-    assert env_path.read_text() == "APIFY_API_TOKEN=tok_from_prompt\n"
-
-
-def test_setup_command_rejects_empty_token(env_path, monkeypatch):
+    saved = {}
     monkeypatch.setattr(
-        "apify_hermes_agent_plugin.cli.getpass.getpass",
-        lambda *a, **k: "   ",
+        "hermes_cli.config.save_env_value",
+        lambda key, value: saved.update(key=key, value=value),
     )
 
     from apify_hermes_agent_plugin.cli import apify_setup_command
     args = argparse.Namespace(token=None)
     rc = apify_setup_command(args)
 
-    assert rc == 1
-    assert not env_path.exists()
+    assert rc == 0
+    assert saved == {"key": "APIFY_API_TOKEN", "value": "tok_from_prompt"}
 
 
-def test_setup_command_replaces_existing_key_preserving_others(env_path, monkeypatch):
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("OTHER_KEY=keep-me\nAPIFY_API_TOKEN=old-token\nANOTHER=also-keep\n")
+def test_setup_command_rejects_whitespace_only_prompted_token(monkeypatch):
+    monkeypatch.setattr(
+        "apify_hermes_agent_plugin.cli.getpass.getpass",
+        lambda *a, **k: "   ",
+    )
+    saved = {}
+    monkeypatch.setattr(
+        "hermes_cli.config.save_env_value",
+        lambda key, value: saved.update(key=key, value=value),
+    )
 
     from apify_hermes_agent_plugin.cli import apify_setup_command
-    args = argparse.Namespace(token="new-token")
-    rc = apify_setup_command(args)
+    args = argparse.Namespace(token=None)
 
-    assert rc == 0
-    content = env_path.read_text()
-    assert "OTHER_KEY=keep-me" in content
-    assert "ANOTHER=also-keep" in content
-    assert "APIFY_API_TOKEN=new-token" in content
-    assert "old-token" not in content
+    with pytest.raises(SystemExit) as exc_info:
+        apify_setup_command(args)
+
+    assert exc_info.value.code == 1
+    assert not saved
 
 
-def test_setup_command_appends_when_env_file_has_no_apify_key(env_path, monkeypatch):
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("OTHER_KEY=keep-me\n")
+def test_setup_command_rejects_explicit_empty_token_flag_without_prompting(monkeypatch):
+    """An explicit `--token ""` must abort immediately, not fall through to
+    the interactive prompt (that would hang/EOFError on non-interactive stdin,
+    e.g. `--token "$TOKEN"` with an unset $TOKEN in a script)."""
+    prompted = []
+    monkeypatch.setattr(
+        "apify_hermes_agent_plugin.cli.getpass.getpass",
+        lambda *a, **k: prompted.append(True) or "unused",
+    )
+    saved = {}
+    monkeypatch.setattr(
+        "hermes_cli.config.save_env_value",
+        lambda key, value: saved.update(key=key, value=value),
+    )
 
     from apify_hermes_agent_plugin.cli import apify_setup_command
-    args = argparse.Namespace(token="fresh-token")
-    rc = apify_setup_command(args)
+    args = argparse.Namespace(token="")
 
-    assert rc == 0
-    content = env_path.read_text()
-    assert "OTHER_KEY=keep-me" in content
-    assert "APIFY_API_TOKEN=fresh-token" in content
+    with pytest.raises(SystemExit) as exc_info:
+        apify_setup_command(args)
 
-
-def test_write_env_var_sets_restrictive_permissions(env_path, monkeypatch):
-    from apify_hermes_agent_plugin.cli import _write_env_var
-    _write_env_var("APIFY_API_TOKEN", "tok")
-
-    mode = env_path.stat().st_mode & 0o777
-    assert mode == 0o600
+    assert exc_info.value.code == 1
+    assert not prompted
+    assert not saved
 
 
 # ---------------------------------------------------------------------------
 # Toolset auto-enable
 # ---------------------------------------------------------------------------
 
-def test_setup_command_enables_apify_toolset_for_cli(env_path, monkeypatch):
+def test_setup_command_enables_apify_toolset_for_cli(monkeypatch):
     saved = {}
     monkeypatch.setattr(
         "hermes_cli.tools_config._save_platform_tools",
@@ -153,7 +157,7 @@ def test_setup_command_enables_apify_toolset_for_cli(env_path, monkeypatch):
     assert "apify" in saved["enabled"]
 
 
-def test_setup_command_succeeds_even_if_toolset_enable_raises(env_path, monkeypatch, capsys):
+def test_setup_command_succeeds_even_if_toolset_enable_raises(monkeypatch, capsys):
     def _boom():
         raise RuntimeError("hermes_cli internals changed")
 
@@ -164,22 +168,26 @@ def test_setup_command_succeeds_even_if_toolset_enable_raises(env_path, monkeypa
     rc = apify_setup_command(args)
 
     assert rc == 0
-    assert env_path.read_text() == "APIFY_API_TOKEN=tok\n"
     assert "hermes tools" in capsys.readouterr().out
 
 
-def test_enable_apify_toolset_for_cli_merges_with_existing_and_saves(monkeypatch):
-    fake_config = {"marker": "config"}
+def test_enable_apify_toolset_preserves_implicit_defaults_when_no_explicit_config(monkeypatch):
+    """When the "cli" platform has no explicit toolset list yet, don't
+    expand+freeze the implicit default composite — reference it by name."""
+    fake_config = {}  # no "platform_toolsets" key at all
     saved = {}
+    resolve_calls = []
 
     monkeypatch.setattr("hermes_cli.config.load_config", lambda: fake_config)
     monkeypatch.setattr(
+        "hermes_cli.tools_config.PLATFORMS", {"cli": {"default_toolset": "hermes-cli"}}
+    )
+    monkeypatch.setattr(
         "hermes_cli.tools_config._get_platform_tools",
-        lambda config, platform: {"web_search"} if platform == "cli" else set(),
+        lambda config, platform: resolve_calls.append(True) or set(),
     )
 
     def _fake_save(config, platform, enabled):
-        saved["config"] = config
         saved["platform"] = platform
         saved["enabled"] = enabled
 
@@ -188,6 +196,32 @@ def test_enable_apify_toolset_for_cli_merges_with_existing_and_saves(monkeypatch
     from apify_hermes_agent_plugin.cli import _enable_apify_toolset_for_cli
     _enable_apify_toolset_for_cli()
 
-    assert saved["config"] is fake_config
+    assert not resolve_calls, "must not resolve/expand the implicit default set"
     assert saved["platform"] == "cli"
-    assert saved["enabled"] == {"web_search", "apify"}
+    assert saved["enabled"] == {"hermes-cli", "apify"}
+
+
+def test_enable_apify_toolset_extends_existing_explicit_config(monkeypatch):
+    """When the "cli" platform already has an explicit toolset list, extend
+    it via the normal resolve path — no freezing risk since it's already
+    explicit."""
+    fake_config = {"platform_toolsets": {"cli": ["web_search", "spotify"]}}
+    saved = {}
+
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: fake_config)
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._get_platform_tools",
+        lambda config, platform: {"web_search", "spotify"} if platform == "cli" else set(),
+    )
+
+    def _fake_save(config, platform, enabled):
+        saved["platform"] = platform
+        saved["enabled"] = enabled
+
+    monkeypatch.setattr("hermes_cli.tools_config._save_platform_tools", _fake_save)
+
+    from apify_hermes_agent_plugin.cli import _enable_apify_toolset_for_cli
+    _enable_apify_toolset_for_cli()
+
+    assert saved["platform"] == "cli"
+    assert saved["enabled"] == {"web_search", "spotify", "apify"}

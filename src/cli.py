@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
-
-from hermes_constants import get_hermes_home
+import sys
 
 _ENV_KEY = "APIFY_API_TOKEN"
 
@@ -27,7 +26,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 def apify_setup_command(args: argparse.Namespace) -> int:
     """Prompt for (or accept via --token) the Apify API token and save it."""
     token = getattr(args, "token", None)
-    if token:
+    if token is not None:
         token = token.strip()
     else:
         print(
@@ -38,10 +37,12 @@ def apify_setup_command(args: argparse.Namespace) -> int:
 
     if not token:
         print("No token provided — aborted.")
-        return 1
+        sys.exit(1)
 
-    _write_env_var(_ENV_KEY, token)
-    print(f"Saved {_ENV_KEY} to {get_hermes_home() / '.env'}")
+    from hermes_cli.config import get_env_path, save_env_value
+
+    save_env_value(_ENV_KEY, token)
+    print(f"Saved {_ENV_KEY} to {get_env_path()}")
 
     try:
         _enable_apify_toolset_for_cli()
@@ -61,33 +62,27 @@ def _enable_apify_toolset_for_cli() -> None:
     agent.disabled_toolsets, preserving MCP server entries, plugin-toolset
     bookkeeping. These are private hermes_cli internals with no stability
     guarantee; callers should treat failure here as non-fatal.
+
+    If the "cli" platform has no explicit toolset list yet, resolving and
+    saving it (via ``_get_platform_tools``) would expand the implicit
+    default composite (every default-on toolset, plus MCP servers) into a
+    frozen explicit snapshot — silently opting this user out of any future
+    default-on toolset that ships in a later hermes-agent release. Instead,
+    keep the composite referenced by name (the same "[hermes-cli, spotify]"
+    mixed-config shape ``_get_platform_tools`` already supports for a single
+    explicit opt-in alongside the defaults).
     """
     from hermes_cli.config import load_config
-    from hermes_cli.tools_config import _get_platform_tools, _save_platform_tools
+    from hermes_cli.tools_config import PLATFORMS, _get_platform_tools, _save_platform_tools
 
     config = load_config()
-    enabled = _get_platform_tools(config, "cli")
+    existing = (config.get("platform_toolsets") or {}).get("cli")
+
+    if isinstance(existing, list):
+        enabled = _get_platform_tools(config, "cli")
+    else:
+        default_ts = PLATFORMS.get("cli", {}).get("default_toolset", "hermes-cli")
+        enabled = {default_ts}
+
     enabled.add("apify")
     _save_platform_tools(config, "cli", enabled)
-
-
-def _write_env_var(key: str, value: str) -> None:
-    """Set ``key=value`` in the Hermes home ``.env`` file, preserving other lines."""
-    env_path = get_hermes_home() / ".env"
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-
-    lines = env_path.read_text().splitlines() if env_path.exists() else []
-    prefix = f"{key}="
-    new_lines = []
-    replaced = False
-    for line in lines:
-        if line.startswith(prefix):
-            new_lines.append(f"{key}={value}")
-            replaced = True
-        else:
-            new_lines.append(line)
-    if not replaced:
-        new_lines.append(f"{key}={value}")
-
-    env_path.write_text("\n".join(new_lines) + "\n")
-    env_path.chmod(0o600)
