@@ -18,7 +18,16 @@ dependencies = [
 dev = ["pytest==9.0.2", "pytest-asyncio==1.3.0"]
 
 [project.entry-points."hermes_agent.plugins"]
-apify = "apify_hermes_agent_plugin:register"
+# NOTE: must point at the bare module, not "apify_hermes_agent_plugin:register".
+# hermes-agent's loader (hermes_cli/plugins.py::_load_entrypoint_module) calls
+# ep.load() and then does getattr(result, "register") — it expects a module.
+# Per importlib.metadata semantics, "module:attr" entry points make ep.load()
+# return the attr itself (the register function), not the module, so
+# getattr(register_fn, "register") finds nothing and the plugin silently
+# fails to load ("no register() function"). This diverges from hermes-agent's
+# own plugin docs example (which shows "my_plugin:register") — see
+# https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins.
+apify = "apify_hermes_agent_plugin"
 
 [tool.setuptools]
 packages = ["apify_hermes_agent_plugin"]
