@@ -7,7 +7,7 @@ name = "apify-hermes-agent-plugin"
 version = "0.1.0"
 description = "Apify Actor execution tools (discover, start, collect) as a Hermes Agent plugin"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "hermes-agent>=0.15.1",
