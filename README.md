@@ -6,10 +6,22 @@ Apify Store, start runs, and collect structured results, all from natural langua
 ## Install
 
     pip install apify-hermes-agent-plugin
-    hermes plugins enable apify
 
-Then run `hermes tools`, find **Apify Actors**, enable the toolset, and set your `APIFY_API_TOKEN`
-(get one at https://apify.com/account/integrations).
+`hermes plugins enable apify` currently doesn't recognize pip-installed plugins (a hermes-agent
+CLI bug — it only scans bundled/user plugin directories, not `hermes_agent.plugins` entry points).
+Until that's fixed upstream, enable it directly in `~/.hermes/config.yaml`:
+
+    plugins:
+      enabled:
+        - apify
+
+Then run:
+
+    hermes apify-setup
+
+This prompts for your `APIFY_API_TOKEN` (get one at https://apify.com/account/integrations),
+saves it, and enables the Apify Actors toolset for the CLI. Pass `--token <token>` to skip the
+prompt.
 
 ## Tools
 
