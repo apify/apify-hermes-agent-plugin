@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from apify_hermes_agent_plugin import register
+from apify_hermes_agent_plugin.cli import apify_setup_command, register_cli
 from apify_hermes_agent_plugin.tools import _check_token
 
 
@@ -37,3 +38,18 @@ def test_register_marks_only_collect_as_async():
     assert by_name["apify_discover"].get("is_async", False) is False
     assert by_name["apify_start"].get("is_async", False) is False
     assert by_name["apify_collect"]["is_async"] is True
+
+
+def test_register_wires_apify_setup_cli_command():
+    ctx = MagicMock()
+    register(ctx)
+    ctx.register_cli_command.assert_called_once_with(
+        name="apify-setup",
+        help="Set your Apify API token",
+        setup_fn=register_cli,
+        handler_fn=apify_setup_command,
+        description=(
+            "Prompt for (or accept via --token) your APIFY_API_TOKEN and "
+            "save it to ~/.hermes/.env."
+        ),
+    )

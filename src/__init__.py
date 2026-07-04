@@ -1,6 +1,7 @@
 """apify-hermes-agent-plugin — Apify Actor execution tools for Hermes Agent."""
 from __future__ import annotations
 
+from apify_hermes_agent_plugin.cli import apify_setup_command, register_cli
 from apify_hermes_agent_plugin.tools import (
     _COLLECT_SCHEMA,
     _DISCOVER_SCHEMA,
@@ -31,3 +32,14 @@ def register(ctx) -> None:
             is_async=is_async,
             emoji=emoji,
         )
+
+    ctx.register_cli_command(
+        name="apify-setup",
+        help="Set your Apify API token",
+        setup_fn=register_cli,
+        handler_fn=apify_setup_command,
+        description=(
+            "Prompt for (or accept via --token) your APIFY_API_TOKEN and "
+            "save it to ~/.hermes/.env."
+        ),
+    )
