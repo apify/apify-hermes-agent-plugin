@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
 import getpass
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import argparse
 
 _ENV_KEY = 'APIFY_API_TOKEN'
 
@@ -42,7 +45,7 @@ def apify_setup_command(args: argparse.Namespace) -> int:
     try:
         _enable_apify_toolset_for_cli()
         print('Enabled the Apify Actors toolset for the CLI.')
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f'Could not auto-enable the Apify Actors toolset ({exc}).')
         print('Run `hermes tools` and enable it manually.')
 

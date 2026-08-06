@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _TERMINAL_STATUSES = {'SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'}
 _MAX_BATCH_RUNS = 10
 _COLLECT_DEFAULT_LIMIT = 100
+_MAX_CONTENT_CHARS = 50_000
 
 
 def _attr(obj: Any, key: str, default: Any = None) -> Any:
@@ -95,6 +96,10 @@ def _discover_actor(client: Any, actor_id: str) -> dict[str, Any]:
         username = _attr(actor_info, 'username', '')
         name = _attr(actor_info, 'name', '')
         title = _attr(actor_info, 'title', '') or name
+    except Exception as exc:
+        logger.warning('apify_discover schema fetch error for %s: %s', actor_id, exc)
+        return {'error': str(exc)}
+    else:
         return {
             'actor_id': f'{username}~{name}',
             'name': name,
@@ -105,9 +110,6 @@ def _discover_actor(client: Any, actor_id: str) -> dict[str, Any]:
             'readme': readme,
             'tip': (f"Use apify_start with actor_id='{username}~{name}' and an input matching the input_schema above."),
         }
-    except Exception as exc:  # noqa: BLE001
-        logger.warning('apify_discover schema fetch error for %s: %s', actor_id, exc)
-        return {'error': str(exc)}
 
 
 def _discover_store(client: Any, query: str) -> dict[str, Any]:
@@ -134,10 +136,39 @@ def _discover_store(client: Any, query: str) -> dict[str, Any]:
                     'run_count': run_count,
                 }
             )
-        return {'actors': actors}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("apify_discover store search error for '%s': %s", query, exc)
         return {'error': str(exc)}
+    else:
+        return {'actors': actors}
+
+
+def _start_one_run(client: Any, spec: dict[str, Any]) -> dict[str, Any]:
+    actor_id = (spec.get('actor_id') or '').strip()
+    run_input = spec.get('input') or {}
+    label = spec.get('label')
+
+    if not actor_id:
+        return {'_ok': False, 'error': "Missing 'actor_id' in run spec."}
+
+    try:
+        run = client.actor(actor_id).start(run_input=run_input)
+        entry: dict[str, Any] = {
+            'run_id': _attr(run, 'id'),
+            'actor_id': actor_id,
+            'dataset_id': _attr(run, 'default_dataset_id'),
+            'status': _attr(run, 'status'),
+        }
+        if label:
+            entry['label'] = label
+    except Exception as exc:
+        logger.warning('apify_start error for %s: %s', actor_id, exc)
+        err: dict[str, Any] = {'actor_id': actor_id, 'error': str(exc)}
+        if label:
+            err['label'] = label
+        return {'_ok': False, **err}
+    else:
+        return {'_ok': True, **entry}
 
 
 def _start_handler(args: dict[str, Any]) -> dict[str, Any]:
@@ -161,36 +192,78 @@ def _start_handler(args: dict[str, Any]) -> dict[str, Any]:
 
         if is_interrupted():
             break
-
-        actor_id = (spec.get('actor_id') or '').strip()
-        run_input = spec.get('input') or {}
-        label = spec.get('label')
-
-        if not actor_id:
-            errors.append({'error': "Missing 'actor_id' in run spec."})
-            continue
-
-        try:
-            run = client.actor(actor_id).start(run_input=run_input)
-            entry: dict[str, Any] = {
-                'run_id': _attr(run, 'id'),
-                'actor_id': actor_id,
-                'dataset_id': _attr(run, 'default_dataset_id'),
-                'status': _attr(run, 'status'),
-            }
-            if label:
-                entry['label'] = label
-            started.append(entry)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning('apify_start error for %s: %s', actor_id, exc)
-            err: dict[str, Any] = {'actor_id': actor_id, 'error': str(exc)}
-            if label:
-                err['label'] = label
-            errors.append(err)
+        outcome = _start_one_run(client, spec)
+        ok = outcome.pop('_ok')
+        (started if ok else errors).append(outcome)
 
     result: dict[str, Any] = {'runs': started}
     if errors:
         result['errors'] = errors
+    return result
+
+
+async def _check_run(client: Any, limit: int, ref: dict[str, Any]) -> dict[str, Any]:
+    run_id = ref.get('run_id', '')
+    actor_id = ref.get('actor_id', '')
+    dataset_id = ref.get('dataset_id', '')
+    label = ref.get('label')
+
+    base: dict[str, Any] = {
+        'run_id': run_id,
+        'actor_id': actor_id,
+        'dataset_id': dataset_id,
+    }
+    if label:
+        base['label'] = label
+
+    try:
+        run_info = await asyncio.to_thread(client.run(run_id).get)
+
+        if run_info is None:
+            return {**base, '_type': 'error', 'error': 'Run not found.'}
+
+        status = _attr(run_info, 'status', 'UNKNOWN')
+        base['status'] = status
+
+        if status not in _TERMINAL_STATUSES:
+            return {**base, '_type': 'pending'}
+
+        if status != 'SUCCEEDED':
+            return {**base, '_type': 'error', 'error': f'Run ended with status: {status}'}
+
+        return await _collect_dataset(client, limit, run_id, dataset_id, base)
+
+    except Exception as exc:
+        logger.warning('apify_collect error for run %s: %s', run_id, exc)
+        return {**base, '_type': 'error', 'error': str(exc)}
+
+
+async def _collect_dataset(
+    client: Any, limit: int, run_id: str, dataset_id: str, base: dict[str, Any]
+) -> dict[str, Any]:
+    dataset_result = await asyncio.to_thread(client.dataset(dataset_id).list_items, limit=limit)
+    items = list(_attr(dataset_result, 'items') or [])
+    may_have_more = len(items) == limit
+    if may_have_more:
+        logger.warning(
+            'apify_collect run %s: fetched %d items (hit limit=%d) — '
+            'dataset may have more; re-call with a higher limit if needed',
+            run_id,
+            len(items),
+            limit,
+        )
+    raw = json.dumps(items, indent=2, default=str)
+    if len(raw) > _MAX_CONTENT_CHARS:
+        raw = raw[:_MAX_CONTENT_CHARS] + '\n\n[…truncated]'
+    wrapped = '<<<EXTERNAL_UNTRUSTED_CONTENT>>>\n' + raw + '\n<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>'
+    result: dict[str, Any] = {
+        **base,
+        '_type': 'completed',
+        'result_count': len(items),
+        'data': wrapped,
+    }
+    if may_have_more:
+        result['may_have_more'] = True
     return result
 
 
@@ -207,66 +280,7 @@ async def _collect_handler(args: dict[str, Any]) -> dict[str, Any]:
     limit = int(args.get('limit') or _COLLECT_DEFAULT_LIMIT)
     client = _get_client()
 
-    async def _check_run(ref: dict[str, Any]) -> dict[str, Any]:
-        run_id = ref.get('run_id', '')
-        actor_id = ref.get('actor_id', '')
-        dataset_id = ref.get('dataset_id', '')
-        label = ref.get('label')
-
-        base: dict[str, Any] = {
-            'run_id': run_id,
-            'actor_id': actor_id,
-            'dataset_id': dataset_id,
-        }
-        if label:
-            base['label'] = label
-
-        try:
-            run_info = await asyncio.to_thread(client.run(run_id).get)
-
-            if run_info is None:
-                return {**base, '_type': 'error', 'error': 'Run not found.'}
-
-            status = _attr(run_info, 'status', 'UNKNOWN')
-            base['status'] = status
-
-            if status not in _TERMINAL_STATUSES:
-                return {**base, '_type': 'pending'}
-
-            if status != 'SUCCEEDED':
-                return {**base, '_type': 'error', 'error': f'Run ended with status: {status}'}
-
-            # SUCCEEDED — fetch dataset and wrap as external content
-            dataset_result = await asyncio.to_thread(client.dataset(dataset_id).list_items, limit=limit)
-            items = list(_attr(dataset_result, 'items') or [])
-            may_have_more = len(items) == limit
-            if may_have_more:
-                logger.warning(
-                    'apify_collect run %s: fetched %d items (hit limit=%d) — '
-                    'dataset may have more; re-call with a higher limit if needed',
-                    run_id,
-                    len(items),
-                    limit,
-                )
-            raw = json.dumps(items, indent=2, default=str)
-            if len(raw) > 50_000:
-                raw = raw[:50_000] + '\n\n[…truncated]'
-            wrapped = '<<<EXTERNAL_UNTRUSTED_CONTENT>>>\n' + raw + '\n<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>'
-            result: dict[str, Any] = {
-                **base,
-                '_type': 'completed',
-                'result_count': len(items),
-                'data': wrapped,
-            }
-            if may_have_more:
-                result['may_have_more'] = True
-            return result
-
-        except Exception as exc:  # noqa: BLE001
-            logger.warning('apify_collect error for run %s: %s', run_id, exc)
-            return {**base, '_type': 'error', 'error': str(exc)}
-
-    raw_results = await asyncio.gather(*[_check_run(ref) for ref in run_refs])
+    raw_results = await asyncio.gather(*[_check_run(client, limit, ref) for ref in run_refs])
 
     completed: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
@@ -399,13 +413,16 @@ _COLLECT_SCHEMA: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
-def discover_handler_str(args: dict[str, Any], **kw: Any) -> str:
+def discover_handler_str(args: dict[str, Any], **_kw: Any) -> str:
+    """String-returning wrapper around `_discover_handler`, for hermes-agent's tool dispatcher."""
     return json.dumps(_discover_handler(args), default=str)
 
 
-def start_handler_str(args: dict[str, Any], **kw: Any) -> str:
+def start_handler_str(args: dict[str, Any], **_kw: Any) -> str:
+    """String-returning wrapper around `_start_handler`, for hermes-agent's tool dispatcher."""
     return json.dumps(_start_handler(args), default=str)
 
 
-async def collect_handler_str(args: dict[str, Any], **kw: Any) -> str:
+async def collect_handler_str(args: dict[str, Any], **_kw: Any) -> str:
+    """String-returning wrapper around `_collect_handler`, for hermes-agent's tool dispatcher."""
     return json.dumps(await _collect_handler(args), default=str)

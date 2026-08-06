@@ -31,7 +31,7 @@ def get_apify_client() -> Any:
             'Apify tools are not configured. Set APIFY_API_TOKEN (get one at https://apify.com/account/integrations).'
         )
     client_config = ('direct', api_token)
-    if _CLIENT is not None and _CLIENT_CONFIG == client_config:
+    if _CLIENT is not None and client_config == _CLIENT_CONFIG:
         return _CLIENT
     _CLIENT = ApifyClient(token=api_token, headers=_HERMES_HEADERS)
     _CLIENT_CONFIG = client_config

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from apify_hermes_agent_plugin.cli import apify_setup_command, register_cli
 from apify_hermes_agent_plugin.tools import (
     _COLLECT_SCHEMA,
@@ -20,7 +22,7 @@ _TOOLS = (
 )
 
 
-def register(ctx) -> None:
+def register(ctx: Any) -> None:
     """Register the three Apify Actor tools. Called once by the Hermes plugin loader."""
     for name, schema, handler, emoji, is_async in _TOOLS:
         ctx.register_tool(
