@@ -1,11 +1,12 @@
 """``hermes apify-setup`` — prompt for and save the Apify API token."""
+
 from __future__ import annotations
 
 import argparse
 import getpass
 import sys
 
-_ENV_KEY = "APIFY_API_TOKEN"
+_ENV_KEY = 'APIFY_API_TOKEN'
 
 
 def register_cli(parser: argparse.ArgumentParser) -> None:
@@ -14,42 +15,36 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     Called by the Hermes plugin loader with the parser for this subcommand.
     """
     parser.add_argument(
-        "--token",
+        '--token',
         default=None,
-        help=(
-            "Apify API token (skips the interactive prompt). "
-            "If omitted, you'll be prompted securely."
-        ),
+        help=("Apify API token (skips the interactive prompt). If omitted, you'll be prompted securely."),
     )
 
 
 def apify_setup_command(args: argparse.Namespace) -> int:
     """Prompt for (or accept via --token) the Apify API token and save it."""
-    token = getattr(args, "token", None)
+    token = getattr(args, 'token', None)
     if token is not None:
         token = token.strip()
     else:
-        print(
-            "Set your Apify API token "
-            "(get one at https://apify.com/account/integrations)."
-        )
-        token = getpass.getpass(f"{_ENV_KEY}: ").strip()
+        print('Set your Apify API token (get one at https://apify.com/account/integrations).')
+        token = getpass.getpass(f'{_ENV_KEY}: ').strip()
 
     if not token:
-        print("No token provided — aborted.")
+        print('No token provided — aborted.')
         sys.exit(1)
 
     from hermes_cli.config import get_env_path, save_env_value
 
     save_env_value(_ENV_KEY, token)
-    print(f"Saved {_ENV_KEY} to {get_env_path()}")
+    print(f'Saved {_ENV_KEY} to {get_env_path()}')
 
     try:
         _enable_apify_toolset_for_cli()
-        print("Enabled the Apify Actors toolset for the CLI.")
+        print('Enabled the Apify Actors toolset for the CLI.')
     except Exception as exc:  # noqa: BLE001
-        print(f"Could not auto-enable the Apify Actors toolset ({exc}).")
-        print("Run `hermes tools` and enable it manually.")
+        print(f'Could not auto-enable the Apify Actors toolset ({exc}).')
+        print('Run `hermes tools` and enable it manually.')
 
     return 0
 
@@ -76,13 +71,13 @@ def _enable_apify_toolset_for_cli() -> None:
     from hermes_cli.tools_config import PLATFORMS, _get_platform_tools, _save_platform_tools
 
     config = load_config()
-    existing = (config.get("platform_toolsets") or {}).get("cli")
+    existing = (config.get('platform_toolsets') or {}).get('cli')
 
     if isinstance(existing, list):
-        enabled = _get_platform_tools(config, "cli")
+        enabled = _get_platform_tools(config, 'cli')
     else:
-        default_ts = PLATFORMS.get("cli", {}).get("default_toolset", "hermes-cli")
+        default_ts = PLATFORMS.get('cli', {}).get('default_toolset', 'hermes-cli')
         enabled = {default_ts}
 
-    enabled.add("apify")
-    _save_platform_tools(config, "cli", enabled)
+    enabled.add('apify')
+    _save_platform_tools(config, 'cli', enabled)
