@@ -29,9 +29,8 @@ dev = ["pytest==9.0.2", "pytest-asyncio==1.3.0", "ruff>=0.15.20"]
 # https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins.
 apify = "apify_hermes_agent_plugin"
 
-[tool.setuptools]
-packages = ["apify_hermes_agent_plugin"]
-package-dir = { "apify_hermes_agent_plugin" = "src" }
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -95,6 +94,6 @@ ignore = [
     "S105",     # Possible hardcoded password — these are fake test tokens.
     "S106",     # Possible hardcoded password assigned to argument — same reason.
 ]
-"src/cli.py" = [
+"src/apify_hermes_agent_plugin/cli.py" = [
     "T201",     # `print` found — this file *is* the CLI's terminal UI; printing is the point.
 ]
