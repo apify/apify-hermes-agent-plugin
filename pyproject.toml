@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.2", "pytest-asyncio==1.3.0", "ruff>=0.15.20", "ty>=0.0.65"]
+dev = ["pytest==9.0.2", "pytest-asyncio==1.3.0", "ruff>=0.15.20,<0.17", "ty>=0.0.65,<0.1"]
 
 [project.entry-points."hermes_agent.plugins"]
 # NOTE: must point at the bare module, not "apify_hermes_agent_plugin:register".
@@ -71,9 +71,9 @@ ignore = [
                 # once at import time and monkeypatching the source module afterwards would not
                 # reach it — see tests/test_tools.py's `not_interrupted` fixture.
     "PLR0913",  # Too many arguments in function definition.
-    "PLW0603",  # Using `global` — `src/client.py`'s two module-level variables are a deliberate
-                # single-client memoization cache; a wrapper class for two variables would be
-                # more ceremony than the pattern it replaces.
+    "PLW0603",  # Using `global` — `src/apify_hermes_agent_plugin/client.py`'s two module-level
+                # variables are a deliberate single-client memoization cache; a wrapper class for
+                # two variables would be more ceremony than the pattern it replaces.
     "EM101",    # Exception must not use a string literal — validation errors are one-off, not reused.
     "EM102",    # Exception must not use an f-string literal — same reason.
     "TRY003",   # Avoid specifying long messages outside the exception class — same reason.
@@ -87,8 +87,9 @@ ignore = [
                 # accepted by a test method for their side effect and never referenced in the body.
     "ARG005",   # Same — monkeypatch stub lambdas commonly ignore their arguments.
     "D",        # Missing docstrings.
-    "INP001",   # Implicit namespace package — tests/ has no __init__.py; standardizing the
-                # package layout (src/ and tests/) is scoped to a later task, not this one.
+    "INP001",   # Implicit namespace package — tests/ deliberately has no __init__.py (a pytest
+                # rootdir/import-mode choice), so this rule will always fire here; it's a
+                # permanent ignore, not pending work.
     "PLR2004",  # Magic value used in comparison.
     "S101",     # Use of assert detected.
     "S105",     # Possible hardcoded password — these are fake test tokens.
@@ -96,10 +97,4 @@ ignore = [
 ]
 "src/apify_hermes_agent_plugin/cli.py" = [
     "T201",     # `print` found — this file *is* the CLI's terminal UI; printing is the point.
-]
-"src/apify_hermes_agent_plugin/tools.py" = [
-    "S101",     # Use of assert detected — `_discover_handler` uses a single `assert` to prove to `ty`
-                # that `query` is non-None at the `_discover_store` call site (guaranteed by the
-                # `query`/`actor_id` guard above it, which `ty` cannot follow across two variables).
-                # Not a runtime safety check meant to survive `python -O`; a type-narrowing hint.
 ]

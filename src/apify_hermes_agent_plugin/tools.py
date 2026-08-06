@@ -61,7 +61,9 @@ def _discover_handler(args: dict[str, Any]) -> dict[str, Any]:
     client = _get_client()
     if actor_id:
         return _discover_actor(client, actor_id)
-    assert query is not None, 'guaranteed by the query/actor_id check above'
+    # This is a type-narrowing hint for `ty`, not a `-O`-surviving safety net — it's provably
+    # redundant given the `query`/`actor_id` guard above, so it's fine if stripped.
+    assert query is not None, 'guaranteed by the query/actor_id check above'  # noqa: S101
     return _discover_store(client, query)
 
 
