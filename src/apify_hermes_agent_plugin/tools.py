@@ -61,6 +61,7 @@ def _discover_handler(args: dict[str, Any]) -> dict[str, Any]:
     client = _get_client()
     if actor_id:
         return _discover_actor(client, actor_id)
+    assert query is not None, 'guaranteed by the query/actor_id check above'
     return _discover_store(client, query)
 
 
