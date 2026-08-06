@@ -6,3 +6,5 @@ dist/
 build/
 .venv/
 .venv*/
+.superpowers/
+docs/
