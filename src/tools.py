@@ -53,69 +53,80 @@ def _discover_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     client = _get_client()
-
     if actor_id:
-        try:
-            actor_info = client.actor(actor_id).get()
-            if actor_info is None:
-                return {
-                    "error": (
-                        f"Actor '{actor_id}' not found. "
-                        "Check the ID format: username~actor-name."
-                    )
-                }
+        return _discover_actor(client, actor_id)
+    return _discover_store(client, query)
 
-            input_schema: Any = None
-            readme: Any = None
 
-            build_detail = client.actor(actor_id).default_build().get()
-            if build_detail is not None:
-                actor_def = _attr(build_detail, "actorDefinition") or {}
-                raw_schema = _attr(actor_def, "input")
-                if raw_schema:
-                    input_schema = json.dumps(raw_schema)
-                else:
-                    fallback = _attr(build_detail, "inputSchema")
-                    if fallback:
-                        input_schema = str(fallback)
-
-                raw_readme = _attr(actor_def, "readme") or _attr(build_detail, "readme")
-                if raw_readme:
-                    readme = str(raw_readme)[:3000]
-
-            username = _attr(actor_info, "username", "")
-            name = _attr(actor_info, "name", "")
-            title = _attr(actor_info, "title", "") or name
+def _discover_actor(client: Any, actor_id: str) -> Dict[str, Any]:
+    """Fetch a single Actor's input schema and README by ID or username~actor-name."""
+    try:
+        actor_info = client.actor(actor_id).get()
+        if actor_info is None:
             return {
-                "actor_id": f"{username}~{name}",
-                "name": name,
-                "title": title,
-                "username": username,
-                "description": _attr(actor_info, "description", ""),
-                "input_schema": input_schema,
-                "readme": readme,
-                "tip": (
-                    f"Use apify_start with actor_id='{username}~{name}' "
-                    "and an input matching the input_schema above."
-                ),
+                "error": (
+                    f"Actor '{actor_id}' not found. "
+                    "Check the ID format: username~actor-name."
+                )
             }
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("apify_discover schema fetch error for %s: %s", actor_id, exc)
-            return {"error": str(exc)}
 
-    # Store search
+        input_schema: Any = None
+        readme: Any = None
+
+        build_detail = client.actor(actor_id).default_build().get()
+        if build_detail is not None:
+            # apify-client 3.x returns Pydantic models with snake_case attributes
+            # (e.g. Build.actor_definition, Build.input_schema) — the JSON's
+            # camelCase names only exist as (de)serialization aliases, not as
+            # real attributes, so _attr() must be called with the snake_case name.
+            actor_def = _attr(build_detail, "actor_definition")
+            raw_schema = _attr(actor_def, "input")
+            if raw_schema:
+                input_schema = json.dumps(raw_schema)
+            else:
+                fallback = _attr(build_detail, "input_schema")
+                if fallback:
+                    input_schema = str(fallback)
+
+            raw_readme = _attr(actor_def, "readme") or _attr(build_detail, "readme")
+            if raw_readme:
+                readme = str(raw_readme)[:3000]
+
+        username = _attr(actor_info, "username", "")
+        name = _attr(actor_info, "name", "")
+        title = _attr(actor_info, "title", "") or name
+        return {
+            "actor_id": f"{username}~{name}",
+            "name": name,
+            "title": title,
+            "username": username,
+            "description": _attr(actor_info, "description", ""),
+            "input_schema": input_schema,
+            "readme": readme,
+            "tip": (
+                f"Use apify_start with actor_id='{username}~{name}' "
+                "and an input matching the input_schema above."
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("apify_discover schema fetch error for %s: %s", actor_id, exc)
+        return {"error": str(exc)}
+
+
+def _discover_store(client: Any, query: str) -> Dict[str, Any]:
+    """Search the Apify Store by keyword."""
     try:
         result = client.store().list(search=query, limit=10, sort_by="relevance")
         items = _attr(result, "items") or []
         actors: List[Dict[str, Any]] = []
         for item in items:
-            stats = _attr(item, "stats") or {}
+            stats = _attr(item, "stats")
             name = _attr(item, "name", "")
             username = _attr(item, "username", "")
             title = _attr(item, "title") or name
             desc = (_attr(item, "description") or "")[:200]
-            run_count = _attr(stats, "totalRuns", 0) or 0
-            rating = _attr(stats, "averageRating")
+            # ActorStats.total_runs — see the snake_case note in _discover_actor().
+            run_count = _attr(stats, "total_runs", 0) or 0
             actors.append({
                 "actor_id": f"{username}~{name}",
                 "name": name,
@@ -123,7 +134,6 @@ def _discover_handler(args: Dict[str, Any]) -> Dict[str, Any]:
                 "username": username,
                 "description": desc,
                 "run_count": run_count,
-                "rating": rating,
             })
         return {"actors": actors}
     except Exception as exc:  # noqa: BLE001
@@ -290,7 +300,8 @@ _DISCOVER_SCHEMA: Dict[str, Any] = {
     "description": (
         "Search the Apify Store for Actors by keyword, or fetch an Actor's "
         "input schema and README. Provide 'query' to search, or 'actor_id' "
-        "to inspect a specific Actor. Actor IDs use tilde: username~actor-name."
+        "to inspect a specific Actor. Actor IDs accept either the unique ID "
+        "or the username~actor-name format."
     ),
     "parameters": {
         "type": "object",
@@ -302,8 +313,8 @@ _DISCOVER_SCHEMA: Dict[str, Any] = {
             "actor_id": {
                 "type": "string",
                 "description": (
-                    "Actor ID to fetch its input schema and README "
-                    "(e.g. 'apify~google-search-scraper')."
+                    "Actor ID to fetch its input schema and README — either the "
+                    "unique ID or 'username~actor-name' (e.g. 'apify~google-search-scraper')."
                 ),
             },
         },

@@ -39,14 +39,16 @@ def not_interrupted(monkeypatch):
 
 class TestDiscoverStoreSearch:
     def test_returns_actors_list(self, mock_client):
+        # apify-client 3.x returns Pydantic models, whose attributes are the
+        # snake_case field name (e.g. `total_runs`), not the camelCase JSON
+        # alias (`totalRuns`) — mock the real attribute names here.
         actor_mock = MagicMock()
         actor_mock.username = "apify"
         actor_mock.name = "instagram-scraper"
         actor_mock.title = "Instagram Scraper"
         actor_mock.description = "Scrapes Instagram profiles."
         stats_mock = MagicMock()
-        stats_mock.totalRuns = 50000
-        stats_mock.averageRating = 4.7
+        stats_mock.total_runs = 50000
         actor_mock.stats = stats_mock
 
         list_result = MagicMock()
@@ -64,7 +66,6 @@ class TestDiscoverStoreSearch:
         assert a["title"] == "Instagram Scraper"
         assert a["username"] == "apify"
         assert a["run_count"] == 50000
-        assert a["rating"] == 4.7
         mock_client.store.return_value.list.assert_called_once_with(
             search="instagram scraper", limit=10, sort_by="relevance"
         )
@@ -75,7 +76,7 @@ class TestDiscoverStoreSearch:
         actor_mock.name = "test-actor"
         actor_mock.title = "Test"
         actor_mock.description = "x" * 300
-        actor_mock.stats = MagicMock(totalRuns=0, averageRating=None)
+        actor_mock.stats = MagicMock(total_runs=0)
 
         list_result = MagicMock()
         list_result.items = [actor_mock]
@@ -110,12 +111,14 @@ class TestDiscoverActorSchema:
         actor_info.description = "Scrapes Google Search."
         mock_client.actor.return_value.get.return_value = actor_info
 
+        # Build.actor_definition / Build.input_schema are the real (snake_case)
+        # Pydantic attribute names on apify-client 3.x — see note in _discover_actor().
         build_detail = MagicMock()
         actor_def = MagicMock()
         actor_def.input = input_schema  # dict or None
         actor_def.readme = readme
-        build_detail.actorDefinition = actor_def
-        build_detail.inputSchema = None
+        build_detail.actor_definition = actor_def
+        build_detail.input_schema = None
         build_detail.readme = None
         mock_client.actor.return_value.default_build.return_value.get.return_value = build_detail
 
@@ -147,10 +150,10 @@ class TestDiscoverActorSchema:
         assert len(result["readme"]) == 3000
 
     def test_falls_back_to_build_input_schema_string(self, mock_client):
-        """When actorDefinition.input is None, fall back to build.inputSchema string."""
+        """When actor_definition.input is None, fall back to build.input_schema string."""
         _, build_detail = self._setup_build_mock(mock_client, input_schema=None)
-        build_detail.inputSchema = '{"type":"object"}'
-        build_detail.actorDefinition.input = None
+        build_detail.input_schema = '{"type":"object"}'
+        build_detail.actor_definition.input = None
 
         from apify_hermes_agent_plugin.tools import _discover_handler
         result = _discover_handler({"actor_id": "apify~google-search-scraper"})
