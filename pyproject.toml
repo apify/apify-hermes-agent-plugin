@@ -5,10 +5,24 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "apify-hermes-agent-plugin"
 version = "0.1.0"
-description = "Apify Actor execution tools (discover, start, collect) as a Hermes Agent plugin"
+description = "Hermes Agent plugin for Apify, the world's largest marketplace for AI tools — discover, run, and collect results from Actors, all from natural language"
+authors = [{ name = "Apify Technologies s.r.o.", email = "support@apify.com" }]
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
+]
+keywords = ["apify", "hermes", "hermes-agent", "actor", "plugin", "ai-tools", "automation"]
 dependencies = [
     "hermes-agent>=0.15.1",
     "apify-client>=3.0.1,<4",
@@ -16,6 +30,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest==9.0.2", "pytest-asyncio==1.3.0", "ruff>=0.15.20,<0.17", "ty>=0.0.65,<0.1"]
+
+[project.urls]
+"Homepage" = "https://github.com/apify/apify-hermes-agent-plugin"
+"Source Code" = "https://github.com/apify/apify-hermes-agent-plugin"
+"Issue Tracker" = "https://github.com/apify/apify-hermes-agent-plugin/issues"
+"Changelog" = "https://github.com/apify/apify-hermes-agent-plugin/blob/main/CHANGELOG.md"
+"Hermes Agent" = "https://hermes-agent.nousresearch.com"
 
 [project.entry-points."hermes_agent.plugins"]
 # NOTE: must point at the bare module, not "apify_hermes_agent_plugin:register".

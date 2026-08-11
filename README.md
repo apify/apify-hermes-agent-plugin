@@ -1,7 +1,8 @@
 # apify-hermes-agent-plugin
 
-Apify Actor execution tools for [Hermes Agent](https://hermes-agent.nousresearch.com) — discover Actors in the
-Apify Store, start runs, and collect structured results, all from natural language.
+Hermes Agent plugin for [Apify](https://apify.com), the world's largest marketplace for AI tools — discover
+Actors in the Apify Store, start runs, and collect structured results, all from natural language, via
+[Hermes Agent](https://hermes-agent.nousresearch.com).
 
 ## Install
 
