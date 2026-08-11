@@ -7,14 +7,7 @@ Actors in the Apify Store, start runs, and collect structured results, all from 
 ## Install
 
     pip install apify-hermes-agent-plugin
-
-`hermes plugins enable apify` currently doesn't recognize pip-installed plugins (a hermes-agent
-CLI bug — it only scans bundled/user plugin directories, not `hermes_agent.plugins` entry points).
-Until that's fixed upstream, enable it directly in `~/.hermes/config.yaml`:
-
-    plugins:
-      enabled:
-        - apify
+    hermes plugins enable apify
 
 Then run:
 
