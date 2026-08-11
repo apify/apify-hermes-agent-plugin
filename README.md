@@ -1,19 +1,13 @@
 # apify-hermes-agent-plugin
 
-Apify Actor execution tools for [Hermes Agent](https://hermes-agent.nousresearch.com) — discover Actors in the
-Apify Store, start runs, and collect structured results, all from natural language.
+Hermes Agent plugin for [Apify](https://apify.com), the world's largest marketplace for AI tools — discover
+Actors in the Apify Store, start runs, and collect structured results, all from natural language, via
+[Hermes Agent](https://hermes-agent.nousresearch.com).
 
 ## Install
 
     pip install apify-hermes-agent-plugin
-
-`hermes plugins enable apify` currently doesn't recognize pip-installed plugins (a hermes-agent
-CLI bug — it only scans bundled/user plugin directories, not `hermes_agent.plugins` entry points).
-Until that's fixed upstream, enable it directly in `~/.hermes/config.yaml`:
-
-    plugins:
-      enabled:
-        - apify
+    hermes plugins enable apify
 
 Then run:
 
