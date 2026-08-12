@@ -17,6 +17,24 @@ This prompts for your `APIFY_API_TOKEN` (get one at https://apify.com/account/in
 saves it, and enables the Apify Actors toolset for the CLI. Pass `--token <token>` to skip the
 prompt.
 
+### Troubleshooting: `hermes plugins enable apify` fails
+
+If that command prints `Plugin 'apify' is not installed or bundled.`, your installed
+`hermes-agent` predates the fix for discovering pip/entry-point plugins. Check your version
+and upgrade first:
+
+    hermes --version
+    pip install --upgrade hermes-agent
+
+If you can't upgrade, enable the plugin manually instead: open `~/.hermes/config.yaml` and
+add `apify` to the `plugins.enabled` list:
+
+    plugins:
+      enabled:
+        - apify
+
+Then run `hermes apify-setup` as above — it still takes care of enabling the toolset for you.
+
 ## Tools
 
 - `apify_discover` — search the Apify Store by keyword, or fetch an Actor's input schema + README by `actor_id`.
