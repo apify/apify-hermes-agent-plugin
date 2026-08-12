@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1] - 2026-08-12
+
+### Changed
+
+- README: added a troubleshooting section for `hermes plugins enable apify` failing with
+  "not installed or bundled" on `hermes-agent` versions before `0.18.1`.
+
 ## [0.1.0] - 2026-08-11
 
 ### Added
