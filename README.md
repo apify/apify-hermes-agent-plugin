@@ -1,7 +1,7 @@
 # apify-hermes-agent-plugin
 
-Hermes Agent plugin for [Apify](https://apify.com), the world's largest marketplace for AI tools — discover
-Actors in the Apify Store, start runs, and collect structured results, all from natural language, via
+Hermes Agent plugin for [Apify](https://apify.com), the world's largest marketplace for AI tools - discover
+Actors in Apify Store, start runs, and collect structured results, all from natural language, via
 [Hermes Agent](https://hermes-agent.nousresearch.com).
 
 ## Install
@@ -20,8 +20,8 @@ prompt.
 ### Troubleshooting: `hermes plugins enable apify` fails
 
 If that command prints `Plugin 'apify' is not installed or bundled.`, your installed
-`hermes-agent` predates the fix for discovering pip/entry-point plugins. Check your version
-and upgrade first:
+`hermes-agent` predates `0.18.1`, when entry-point plugin discovery was fixed upstream.
+Check your version and upgrade first:
 
     hermes --version
     pip install --upgrade hermes-agent
@@ -33,13 +33,13 @@ add `apify` to the `plugins.enabled` list:
       enabled:
         - apify
 
-Then run `hermes apify-setup` as above — it still takes care of enabling the toolset for you.
+Then run `hermes apify-setup` as above - it still takes care of enabling the toolset for you.
 
 ## Tools
 
-- `apify_discover` — search the Apify Store by keyword, or fetch an Actor's input schema + README by `actor_id`.
-- `apify_start` — fire-and-forget batch Actor starts (up to 10 per call).
-- `apify_collect` — poll run statuses and return completed dataset results.
+- `apify_discover` - search Apify Store by keyword, or fetch an Actor's input schema + README by `actor_id`.
+- `apify_start` - fire-and-forget batch Actor starts (up to 10 per call).
+- `apify_collect` - poll run statuses and return completed dataset results.
 
 ## Development
 
