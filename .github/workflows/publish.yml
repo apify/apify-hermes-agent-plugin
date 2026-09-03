@@ -42,7 +42,7 @@ jobs:
       changelog: ${{ steps.release_prepare.outputs.changelog }}
       release_notes: ${{ steps.release_prepare.outputs.release_notes }}
     steps:
-      - uses: apify/actions/git-cliff-release@v1.4.0
+      - uses: apify/actions/git-cliff-release@v1.5.0
         name: Release prepare
         id: release_prepare
         with:
@@ -88,15 +88,19 @@ jobs:
       id-token: write
     steps:
       - name: Prepare distribution
-        uses: apify/actions/prepare-pypi-distribution@v1.4.0
+        uses: apify/actions/prepare-pypi-distribution@v1.5.0
         with:
           package_name: apify-hermes-agent-plugin
           is_prerelease: ""
           version_number: ${{ needs.release_prepare.outputs.version_number }}
           ref: ${{ needs.changelog_update.outputs.changelog_commitish }}
+          # This action's own default (`uv run poe install-dev` / `uv run poe build`) assumes a uv+poe
+          # project. This repo builds with plain pip + setuptools (see AGENTS.md), so both must be overridden.
+          install_command: pip install build
+          build_command: python -m build
 
       - name: Verify built package
-        uses: apify/actions/python-package-check@v1.4.0
+        uses: apify/actions/python-package-check@v1.5.0
         with:
           package_name: apify_hermes_agent_plugin
           dist_dir: dist
