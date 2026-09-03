@@ -24,9 +24,12 @@ twine check dist/*              # validate built artifacts before upload
 ```
 
 CI (`.github/workflows/test.yml`) runs lint + type-check + the test matrix (Python
-3.11/3.12/3.13) on every push/PR. `.github/workflows/publish.yml` publishes to PyPI via
-OIDC trusted publishing (no stored token) when a GitHub Release is published, gated by the
-`pypi` GitHub environment's required-reviewer approval.
+3.11/3.12/3.13) on every push/PR, and is also callable as a reusable workflow
+(`workflow_call`) so `publish.yml` can gate a release on it. `.github/workflows/publish.yml`
+is a manually-triggered (`workflow_dispatch`) release pipeline that bumps the version,
+regenerates the changelog, creates the GitHub Release, and publishes to PyPI via OIDC
+trusted publishing (no stored token), all in one run — see [Release process](#release-process)
+below.
 
 ## Architecture
 
@@ -100,8 +103,49 @@ instruction), since these are private hermes_cli internals with no stability gua
   `prune tests`). setuptools' sdist defaults don't auto-include arbitrary root-level docs
   and *do* auto-include `tests/` — `MANIFEST.in` is where that gets corrected, not
   `[tool.setuptools]`.
-- `version` in `pyproject.toml` is a static string, bumped manually — there is no
-  automated versioning.
+- `version` in `pyproject.toml` is a static string, but never bump it by hand — the release
+  pipeline's `changelog_update` job bumps it for you. See [Release process](#release-process).
+
+## Release process
+
+Releases are cut by manually dispatching the `publish` workflow (Actions tab → `publish` →
+**Run workflow**), not by creating a GitHub Release directly. Pick a **Release type**:
+
+- `auto` (the pre-selected default) — `git-cliff` infers patch/minor/major from Conventional
+  Commits since the last tag.
+- `patch` / `minor` / `major` — force that specific bump regardless of what commits exist.
+- `custom` — supply an exact version via `custom_version`.
+
+`publish.yml` runs five jobs in sequence: `checks` (re-runs `test.yml` as a gate) →
+`release_prepare` (computes the version/changelog via `apify/actions/git-cliff-release`) →
+`changelog_update` (bumps `pyproject.toml` and pushes the changelog to `main`, via Apify's
+shared `python_bump_and_update_changelog.yaml` workflow) → `github_release` + `publish`
+(both build off that pushed commit; `publish` builds the sdist/wheel, smoke-tests that
+`apify_hermes_agent_plugin.register` imports and is callable, then uploads to PyPI).
+
+**`auto` gotcha — verified against this repo's real tag history:** if there are zero commits
+since the last tag that count as release-worthy (see below), `git-cliff --bumped-version`
+silently falls back to its config's `[bump].initial_tag` (`v0.1.0`) instead of erroring, and
+`release_prepare`'s own "nothing to release" guard doesn't catch this — it compares tag
+*strings*, not version ordering, so `v0.1.1` (current) vs. the fallback `v0.1.0` looks like a
+legitimate change to it. Left unchecked, this ships a version *older* than the one already on
+PyPI: `changelog_update` pushes a downgrade commit to `main`, `github_release` creates a
+bogus release, and only `publish` fails, at the very last step (PyPI rejects re-uploading a
+used version) — by which point two artifacts need manual cleanup. Before dispatching with
+`auto`, confirm at least one commit since the last tag is release-worthy, or just dispatch
+with `patch`/`minor`/`major` instead — those always compute correctly regardless of commit
+history.
+
+**Which commits count:** the version/changelog logic lives in `apify/actions/git-cliff-release`'s
+own bundled `cliff.toml` (not a file in this repo — there is nothing to configure here).
+It only treats `feat`/`fix`/`perf`/`revert`, breaking-marked (`!:`) `docs`/`refactor`/
+`style`/`test`/`build`/`chore`/`ci`, and commits whose body mentions "security" as
+release-worthy. A plain `chore:`/`ci:`/`docs:`/etc. commit (no `!`) is silently skipped —
+it neither appears in the changelog nor counts toward an `auto` bump.
+
+**Requires** the `APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN` org secret (received via `secrets:
+inherit`) — `changelog_update`'s push to `main` authenticates as that service account, not
+the job's default `GITHUB_TOKEN`.
 
 ## Ruff configuration — rules turned off for real design reasons
 
