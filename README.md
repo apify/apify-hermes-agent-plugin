@@ -45,3 +45,16 @@ Then run `hermes apify-setup` as above - it still takes care of enabling the too
 
     pip install -e ".[dev]"
     pytest
+
+### Releasing
+
+Releases are cut from the **Actions** tab, not by creating a GitHub Release by hand: open
+the `publish` workflow → **Run workflow** → choose a release type (`auto`, `patch`, `minor`,
+`major`, or `custom`). The pipeline then bumps the version, updates `CHANGELOG.md`, creates
+the GitHub Release, and publishes to PyPI automatically.
+
+`auto` infers the version bump from Conventional Commits since the last tag, and only works
+correctly when at least one qualifies (`feat:`, `fix:`, etc. — see `AGENTS.md`'s
+[Release process](AGENTS.md#release-process) for the exact rules). If you're not sure,
+pick `patch`/`minor`/`major` explicitly instead — those always compute correctly regardless
+of commit history.
