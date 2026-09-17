@@ -1,5 +1,17 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+## [0.1.2](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.2) (2026-09-17)
+
+### 🚀 Features
+
+- Introduce apify house CI  ([#5](https://github.com/apify/apify-hermes-agent-plugin/pull/5)) ([3812d43](https://github.com/apify/apify-hermes-agent-plugin/commit/3812d437b254a9df1c7ba81641101140b8e7e7c8)) by [@JanHranicky](https://github.com/JanHranicky)
+- Plugin marketplace dependencies ([#6](https://github.com/apify/apify-hermes-agent-plugin/pull/6)) ([bd5862e](https://github.com/apify/apify-hermes-agent-plugin/commit/bd5862e669ef74ef78def57d6396fca10d2c2cff)) by [@JanHranicky](https://github.com/JanHranicky)
+
+
+# Changelog
+
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
