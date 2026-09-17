@@ -1,0 +1,17 @@
+name: apify
+version: "0.1.1"
+description: 'Apify, the largest marketplace of tools for AI: discover, run, and collect results from
+  thousands of ready-to-run Actors, from the comfort of your agent.'
+author: Apify
+license: MIT
+homepage: https://github.com/apify/apify-hermes-agent-plugin
+provides_tools:
+  - apify_discover
+  - apify_start
+  - apify_collect
+provides_hooks: []
+requires_env:
+  - name: APIFY_API_TOKEN
+    description: Apify API token
+    url: https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations
+    secret: true
