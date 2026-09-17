@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.3) (2026-09-17)
+
+### 🚀 Features
+
+- Add CONTRIBUTING.md ([#7](https://github.com/apify/apify-hermes-agent-plugin/pull/7)) ([2e920b8](https://github.com/apify/apify-hermes-agent-plugin/commit/2e920b83801fed5686d345a2765d0b99d3cdd07b)) by [@JanHranicky](https://github.com/JanHranicky)
+
+
 ## [0.1.2](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.2) (2026-09-17)
 
 ### 🚀 Features
