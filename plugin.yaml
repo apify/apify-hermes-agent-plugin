@@ -13,5 +13,5 @@ provides_hooks: []
 requires_env:
   - name: APIFY_API_TOKEN
     description: Apify API token
-    url: https://apify.com/account/integrations
+    url: https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations
     secret: true
