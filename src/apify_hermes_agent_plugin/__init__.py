@@ -24,7 +24,10 @@ _TOOLS = (
 
 
 def register(ctx: Any) -> None:
-    """Register the three Apify Actor tools. Called once by the Hermes plugin loader."""
+    """Register the three Apify Actor tools, the web search provider, and the CLI setup command.
+
+    Called once by the Hermes plugin loader.
+    """
     for name, schema, handler, emoji, is_async in _TOOLS:
         ctx.register_tool(
             name=name,

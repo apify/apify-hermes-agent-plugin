@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from agent.web_search_provider import WebSearchProvider
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _RAG_ACTOR = 'apify~rag-web-browser'
 _MAX_DESCRIPTION_CHARS = 500
+_SEARCH_WAIT_SECS = 90  # 60s request timeout + startup headroom
 
 
 class ApifyWebSearchProvider(WebSearchProvider):
@@ -49,7 +51,9 @@ class ApifyWebSearchProvider(WebSearchProvider):
             run = client.actor(_RAG_ACTOR).start(
                 run_input={'query': query, 'maxResults': limit, 'requestTimeoutSecs': 60}
             )
-            finished = client.run(_attr(run, 'id')).wait_for_finish()
+            finished = client.run(_attr(run, 'id')).wait_for_finish(wait_duration=timedelta(seconds=_SEARCH_WAIT_SECS))
+            if finished is None or _attr(finished, 'status') not in {'SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'}:
+                return {'success': False, 'error': f'Apify search timed out after {_SEARCH_WAIT_SECS}s'}
             status = _attr(finished, 'status')
             if status != 'SUCCEEDED':
                 return {'success': False, 'error': f'Apify search run ended with status: {status}'}
@@ -67,12 +71,12 @@ class ApifyWebSearchProvider(WebSearchProvider):
         return {
             'name': 'Apify',
             'badge': 'paid',
-            'tag': "Apify's RAG Web Browser Actor, with residential-proxy-backed search.",
+            'tag': "Google Search via Apify's RAG Web Browser Actor — pay-as-you-go platform usage.",
             'env_vars': [
                 {
                     'key': 'APIFY_API_TOKEN',
                     'prompt': 'Apify API token',
-                    'url': 'https://console.apify.com/settings/integrations',
+                    'url': 'https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations',
                 },
             ],
         }

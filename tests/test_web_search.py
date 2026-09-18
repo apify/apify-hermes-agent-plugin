@@ -51,6 +51,10 @@ def test_get_setup_schema_includes_token_env_var():
     env_var_keys = [e['key'] for e in schema['env_vars']]
     assert 'APIFY_API_TOKEN' in env_var_keys
     assert schema['name'] == 'Apify'
+    assert schema['tag'] == "Google Search via Apify's RAG Web Browser Actor — pay-as-you-go platform usage."
+    assert schema['env_vars'][0]['url'] == (
+        'https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations'
+    )
 
 
 def test_search_returns_normalized_results(mock_client):
@@ -133,6 +137,17 @@ def test_search_returns_error_on_failed_run(mock_client):
     result = ApifyWebSearchProvider().search('apify')
 
     assert result == {'success': False, 'error': 'Apify search run ended with status: FAILED'}
+
+
+def test_search_returns_error_on_wait_for_finish_timeout(mock_client):
+    run = MagicMock()
+    run.id = 'run_1'
+    mock_client.actor.return_value.start.return_value = run
+    mock_client.run.return_value.wait_for_finish.return_value = None
+
+    result = ApifyWebSearchProvider().search('apify')
+
+    assert result == {'success': False, 'error': 'Apify search timed out after 90s'}
 
 
 def test_search_returns_error_when_interrupted(monkeypatch, mock_client):
