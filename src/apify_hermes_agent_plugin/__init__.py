@@ -14,6 +14,7 @@ from apify_hermes_agent_plugin.tools import (
     discover_handler_str,
     start_handler_str,
 )
+from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider
 
 _TOOLS = (
     ('apify_discover', _DISCOVER_SCHEMA, discover_handler_str, '🔍', False),
@@ -43,3 +44,5 @@ def register(ctx: Any) -> None:
         handler_fn=apify_setup_command,
         description=('Prompt for (or accept via --token) your APIFY_API_TOKEN and save it to ~/.hermes/.env.'),
     )
+
+    ctx.register_web_search_provider(ApifyWebSearchProvider())
