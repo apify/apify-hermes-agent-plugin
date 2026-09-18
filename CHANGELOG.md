@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.4) (2026-09-18)
+
+### 🐛 Bug Fixes
+
+- Marketplace insall entry point ([#9](https://github.com/apify/apify-hermes-agent-plugin/pull/9)) ([07b2146](https://github.com/apify/apify-hermes-agent-plugin/commit/07b21464f96cedf5af5d78950623711da77d80f7)) by [@JanHranicky](https://github.com/JanHranicky)
+
+
 ## [0.1.3](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.3) (2026-09-17)
 
 ### 🚀 Features
