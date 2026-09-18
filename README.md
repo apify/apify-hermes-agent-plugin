@@ -13,7 +13,7 @@ Then run:
 
     hermes apify-setup
 
-This prompts for your `APIFY_API_TOKEN` (get one at https://apify.com/account/integrations),
+This prompts for your `APIFY_API_TOKEN` (get one at https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations),
 saves it, and enables the Apify Actors toolset for the CLI. Pass `--token <token>` to skip the
 prompt.
 

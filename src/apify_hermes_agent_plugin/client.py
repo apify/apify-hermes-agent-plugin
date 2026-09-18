@@ -28,7 +28,8 @@ def get_apify_client() -> Any:
     api_token = os.getenv('APIFY_API_TOKEN', '').strip()
     if not api_token:
         raise ValueError(
-            'Apify tools are not configured. Set APIFY_API_TOKEN (get one at https://apify.com/account/integrations).'
+            'Apify tools are not configured. Set APIFY_API_TOKEN '
+            '(get one at https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations).'
         )
     client_config = ('direct', api_token)
     if _CLIENT is not None and client_config == _CLIENT_CONFIG:
