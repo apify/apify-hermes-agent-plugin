@@ -44,8 +44,8 @@ class ApifyWebSearchProvider(WebSearchProvider):
         if is_interrupted():
             return {'success': False, 'error': 'Interrupted'}
 
-        client = get_apify_client()
         try:
+            client = get_apify_client()
             run = client.actor(_RAG_ACTOR).start(
                 run_input={'query': query, 'maxResults': limit, 'requestTimeoutSecs': 60}
             )

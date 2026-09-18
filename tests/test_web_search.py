@@ -150,3 +150,17 @@ def test_search_returns_error_on_exception(mock_client):
     result = ApifyWebSearchProvider().search('apify')
 
     assert result == {'success': False, 'error': 'Apify search failed: boom'}
+
+
+def test_search_returns_error_when_client_unavailable(monkeypatch):
+    def raise_value_error():
+        raise ValueError('Apify tools are not configured. Set APIFY_API_TOKEN.')
+
+    monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_apify_client', raise_value_error)
+
+    result = ApifyWebSearchProvider().search('apify')
+
+    assert result == {
+        'success': False,
+        'error': 'Apify search failed: Apify tools are not configured. Set APIFY_API_TOKEN.',
+    }
