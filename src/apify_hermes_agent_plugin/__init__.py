@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from apify_hermes_agent_plugin.cli import apify_setup_command, register_cli
@@ -20,6 +21,8 @@ _TOOLS = (
     ('apify_start', _START_SCHEMA, start_handler_str, '▶️', False),
     ('apify_collect', _COLLECT_SCHEMA, collect_handler_str, '📦', True),
 )
+
+_ACTOR_ROUTING_SKILL_PATH = Path(__file__).parent / 'skills' / 'actor-routing' / 'SKILL.md'
 
 
 def register(ctx: Any) -> None:
@@ -42,4 +45,10 @@ def register(ctx: Any) -> None:
         setup_fn=register_cli,
         handler_fn=apify_setup_command,
         description=('Prompt for (or accept via --token) your APIFY_API_TOKEN and save it to ~/.hermes/.env.'),
+    )
+
+    ctx.register_skill(
+        name='actor-routing',
+        path=_ACTOR_ROUTING_SKILL_PATH,
+        description='Curated Actor picks for common scraping tasks — load before apify_discover.',
     )
