@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from apify_hermes_agent_plugin import register
@@ -51,3 +52,18 @@ def test_register_wires_apify_setup_cli_command():
         handler_fn=apify_setup_command,
         description=('Prompt for (or accept via --token) your APIFY_API_TOKEN and save it to ~/.hermes/.env.'),
     )
+
+
+def test_register_registers_actor_routing_skill():
+    ctx = MagicMock()
+    register(ctx)
+    ctx.register_skill.assert_called_once()
+    kwargs = ctx.register_skill.call_args.kwargs
+    assert kwargs['name'] == 'actor-routing'
+    assert kwargs['description']
+    # A mocked ctx never runs register_skill's real FileNotFoundError check, so verify
+    # the shipped path is real ourselves — otherwise a typo'd path would pass silently.
+    path = kwargs['path']
+    assert isinstance(path, Path)
+    assert path.name == 'SKILL.md'
+    assert path.is_file()

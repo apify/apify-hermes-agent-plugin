@@ -53,6 +53,11 @@ apify = "apify_hermes_agent_plugin"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Non-.py assets aren't bundled by packages.find alone — without this, skills/actor-routing/SKILL.md
+# would exist in an editable install but silently vanish from a real `pip install` wheel.
+apify_hermes_agent_plugin = ["skills/**/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
