@@ -65,12 +65,11 @@ This repo is also listed in the [Hermes plugin catalog](https://github.com/NousR
 (`plugin-catalog/apify.yaml`), which pins an exact commit SHA of this repo and is separate
 from the PyPI release above. Update it after cutting a release:
 
-1. Note the commit SHA the release landed on (the `changelog_update` commit from the
-   **Releasing** step above, e.g. from `git log` or the GitHub Release page).
-2. Run the `bump-catalog-pr` workflow from the **Actions** tab → **Run workflow**, passing that
-   SHA (and, if it changed, a `version` label and/or a new `image` banner URL). It edits
-   `plugin-catalog/apify.yaml`, pushes to the `apify/hermes-agent` fork, and opens a **draft**
-   PR against `NousResearch/hermes-agent`.
-3. Review the draft, mark it ready, and merge it yourself. The catalog's admission policy
+1. Run the `bump-catalog-pr` workflow from the **Actions** tab → **Run workflow**. With no
+   input, it reads the `sha` and `version` straight off this repo's latest GitHub Release, edits
+   `plugin-catalog/apify.yaml`, pushes to the `apify/hermes-agent` fork, and opens a **draft** PR
+   against `NousResearch/hermes-agent`. Pass `sha` and/or `version` explicitly to override the
+   latest release (e.g. to re-bump to an older one), and `image` to set or update the banner URL.
+2. Review the draft, mark it ready, and merge it yourself. The catalog's admission policy
    requires a human-reviewed PR for every SHA bump, so the workflow stops at drafting it - it
    never marks the PR ready or merges it.

@@ -1,20 +1,24 @@
 name: bump-catalog-pr
 
-# Manual only. Bumps this plugin's pinned commit (and optionally version/image) in the Hermes
-# plugin catalog (NousResearch/hermes-agent, plugin-catalog/apify.yaml) and opens a DRAFT PR
-# there via the apify/hermes-agent fork. It never marks the PR ready for review or merges it -
-# the catalog's admission policy requires a human-reviewed PR for every SHA bump (see
+# Manual only. Bumps this plugin's pinned commit (and version/image) in the Hermes plugin
+# catalog (NousResearch/hermes-agent, plugin-catalog/apify.yaml) and opens a DRAFT PR there via
+# the apify/hermes-agent fork. It never marks the PR ready for review or merges it - the
+# catalog's admission policy requires a human-reviewed PR for every SHA bump (see
 # README.md#updating-the-hermes-plugin-catalog-listing).
+#
+# sha/version default to the latest GitHub Release on this repo; pass them explicitly to
+# override (e.g. to re-bump to an older release).
 
 on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit SHA of this repo to pin in the catalog (must exist on this repo)
-        required: true
+        description: "Commit SHA to pin in the catalog. Leave empty to use the latest GitHub Release's commit."
+        required: false
         type: string
+        default: ""
       version:
-        description: 'Human-readable version label for the catalog entry (e.g. "1.4.0"). Leave empty to keep the existing value.'
+        description: "Version label for the catalog entry. Leave empty to use the latest GitHub Release's tag."
         required: false
         type: string
         default: ""
@@ -38,18 +42,51 @@ jobs:
     name: Open draft catalog PR
     runs-on: ubuntu-latest
     steps:
-      - name: Validate sha input
+      - name: Resolve sha/version (defaulting to the latest release)
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA_OVERRIDE: ${{ inputs.sha }}
+          VERSION_OVERRIDE: ${{ inputs.version }}
         run: |
-          if [[ ! "${{ inputs.sha }}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::sha must be a full 40-character lowercase hex commit SHA, got: ${{ inputs.sha }}"
+          sha="$SHA_OVERRIDE"
+          version="$VERSION_OVERRIDE"
+
+          if [[ -z "$sha" || -z "$version" ]]; then
+            tag=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+            echo "Latest release tag: ${tag}"
+          fi
+
+          if [[ -z "$version" ]]; then
+            version="${tag#v}"
+          fi
+
+          if [[ -z "$sha" ]]; then
+            ref=$(gh api "repos/${{ github.repository }}/git/ref/tags/${tag}")
+            obj_type=$(jq -r .object.type <<<"$ref")
+            obj_sha=$(jq -r .object.sha <<<"$ref")
+            if [[ "$obj_type" == "tag" ]]; then
+              # Annotated tag object: one more level of indirection to the commit it points at.
+              sha=$(gh api "repos/${{ github.repository }}/git/tags/${obj_sha}" --jq .object.sha)
+            else
+              sha="$obj_sha"
+            fi
+          fi
+
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::resolved sha is not a full 40-character lowercase hex commit: ${sha}"
             exit 1
           fi
+
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Confirm sha exists on this repo
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/${{ github.repository }}/commits/${{ inputs.sha }}" --jq .sha >/dev/null
+          gh api "repos/${{ github.repository }}/commits/${{ steps.resolve.outputs.sha }}" --jq .sha >/dev/null
 
       - name: Configure git identity and credentials
         run: |
@@ -62,15 +99,15 @@ jobs:
 
       - name: Create branch
         working-directory: upstream
-        run: git checkout -b "bump-apify-${SHA_SHORT}"
         env:
-          SHA_SHORT: ${{ inputs.sha }}
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
+        run: git checkout -b "bump-apify-${SHA_SHORT}"
 
       - name: Bump sha/version/image in the catalog entry
         working-directory: upstream
         env:
-          NEW_SHA: ${{ inputs.sha }}
-          NEW_VERSION: ${{ inputs.version }}
+          NEW_SHA: ${{ steps.resolve.outputs.sha }}
+          NEW_VERSION: ${{ steps.resolve.outputs.version }}
           NEW_IMAGE: ${{ inputs.image }}
         run: |
           python3 - <<'PYEOF'
@@ -113,29 +150,31 @@ jobs:
       - name: Commit
         working-directory: upstream
         env:
-          SHA_SHORT: ${{ inputs.sha }}
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
         run: |
           git add "${CATALOG_FILE}"
-          git commit -m "chore: bump apify pin to ${SHA_SHORT:0:7}"
+          git commit -m "chore: bump apify pin to ${SHA_SHORT}"
 
       - name: Push to apify/hermes-agent fork
         working-directory: upstream
         env:
-          SHA_SHORT: ${{ inputs.sha }}
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
         run: git push "https://github.com/${FORK_REPO}.git" "HEAD:bump-apify-${SHA_SHORT}"
 
       - name: Open draft PR upstream
         env:
-          SHA_SHORT: ${{ inputs.sha }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           gh pr create \
             --repo "${UPSTREAM_REPO}" \
             --base main \
             --head "apify:bump-apify-${SHA_SHORT}" \
             --draft \
-            --title "chore: bump apify pin to ${SHA_SHORT:0:7}" \
+            --title "chore: bump apify pin to ${SHA_SHORT}" \
             --body "$(cat <<EOF
-          Bumps the \`apify\` catalog entry's pinned commit to [\`${SHA_SHORT:0:7}\`](https://github.com/${{ github.repository }}/commit/${SHA_SHORT}).
+          Bumps the \`apify\` catalog entry to version \`${VERSION}\`, pinned commit [\`${SHA_SHORT}\`](https://github.com/${{ github.repository }}/commit/${SHA}).
 
           Opened as a draft by [\`bump-catalog-pr\`](https://github.com/${{ github.repository }}/actions/workflows/bump-catalog-pr.yml) in ${{ github.repository }}, triggered manually by @${{ github.actor }}. Left as a draft for human review before merge, per the catalog's admission policy.
           EOF
