@@ -58,3 +58,12 @@ correctly when at least one qualifies (`feat:`, `fix:`, etc. — see `AGENTS.md`
 [Release process](AGENTS.md#release-process) for the exact rules). If you're not sure,
 pick `patch`/`minor`/`major` explicitly instead — those always compute correctly regardless
 of commit history.
+
+### Updating the Hermes plugin catalog listing
+
+This repo is also listed in the [Hermes plugin catalog](https://github.com/NousResearch/hermes-agent/tree/main/plugin-catalog)
+(`plugin-catalog/apify.yaml`), which pins an exact commit SHA of this repo and is separate
+from the PyPI release above. There's no automation for this step: after cutting a release
+here, open a PR to `NousResearch/hermes-agent` by hand that bumps `apify.yaml`'s `sha` to
+the new release commit (and `version` to match). This stays manual by design - the
+catalog's admission policy requires every SHA bump to be its own human-reviewed PR.
