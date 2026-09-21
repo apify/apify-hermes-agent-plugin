@@ -78,9 +78,11 @@ jobs:
             exit 1
           fi
 
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-          echo "sha_short=${sha:0:7}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          {
+            echo "sha=${sha}"
+            echo "sha_short=${sha:0:7}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Confirm sha exists on this repo
         env:
