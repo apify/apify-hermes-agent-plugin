@@ -114,6 +114,15 @@ class ApifyWebSearchProvider(WebSearchProvider):
         except Exception as exc:  # malformed response body
             return {'url': url, 'title': '', 'content': '', 'raw_content': '', 'error': f'Invalid response body: {exc}'}
 
+        if not isinstance(body, dict):
+            return {
+                'url': url,
+                'title': '',
+                'content': '',
+                'raw_content': '',
+                'error': 'Invalid response body: expected an object',
+            }
+
         if response.status_code >= _HTTP_ERROR_STATUS:
             return {
                 'url': url,

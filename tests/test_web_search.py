@@ -305,6 +305,29 @@ async def test_extract_multiple_urls_preserves_order(mock_web_fetch):
 
 
 @pytest.mark.asyncio
+async def test_extract_non_dict_body_returns_structured_error(mock_web_fetch):
+    def handler(request):
+        # `json=None` is httpx.Response's "no body given" sentinel (produces an empty body,
+        # which already exercises the JSONDecodeError branch) — use `content=b'null'` to get an
+        # actual `null` JSON body, which parses successfully to a non-dict `None`.
+        return httpx.Response(200, content=b'null', headers={'content-type': 'application/json'})
+
+    mock_web_fetch(handler)
+
+    result = await ApifyWebSearchProvider().extract(['https://example.com'])
+
+    assert result == [
+        {
+            'url': 'https://example.com',
+            'title': '',
+            'content': '',
+            'raw_content': '',
+            'error': 'Invalid response body: expected an object',
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_extract_error_code_error_shape(mock_web_fetch):
     def handler(request):
         return httpx.Response(422, json={'code': 'UNSUPPORTED_CONTENT_TYPE', 'error': 'Cannot convert content type'})
