@@ -51,3 +51,13 @@ def test_register_wires_apify_setup_cli_command():
         handler_fn=apify_setup_command,
         description=('Prompt for (or accept via --token) your APIFY_API_TOKEN and save it to ~/.hermes/.env.'),
     )
+
+
+def test_register_registers_apify_web_search_provider():
+    from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider
+
+    ctx = MagicMock()
+    register(ctx)
+    ctx.register_web_search_provider.assert_called_once()
+    provider = ctx.register_web_search_provider.call_args.args[0]
+    assert isinstance(provider, ApifyWebSearchProvider)

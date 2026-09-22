@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,21 @@ def _reset_client(monkeypatch):
     _reset_client_for_tests()
     yield
     _reset_client_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _bare_env_resolution(monkeypatch):
+    """Make token resolution equivalent to plain os.getenv for most tests.
+
+    ``_resolve_apify_api_token()`` prefers ``agent.web_search_provider.get_provider_env``,
+    which itself can fall back to reading a real ``~/.hermes/.env`` off disk. Tests that
+    only care about os.environ behavior (the vast majority) shouldn't be at the mercy of
+    whatever happens to be in the developer's or CI runner's real dotenv file, so this
+    pins tier 1 to a pure os.environ lookup. The fallback-chain tests below override this.
+    """
+    import agent.web_search_provider as wsp
+
+    monkeypatch.setattr(wsp, 'get_provider_env', lambda name: os.getenv(name, '').strip())
 
 
 def test_check_api_key_false_when_unset(monkeypatch):
@@ -86,3 +102,52 @@ def test_get_client_rebuilds_on_token_change(monkeypatch):
     get_apify_client()
 
     assert mock_cls.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# _resolve_apify_api_token() fallback chain
+# ---------------------------------------------------------------------------
+# These bypass the _bare_env_resolution fixture's tier-1 override by re-patching
+# agent.web_search_provider.get_provider_env (and hermes_cli.config.get_env_value)
+# directly, to exercise each tier of the real fallback chain in isolation.
+
+
+def test_resolve_token_prefers_get_provider_env(monkeypatch):
+    import agent.web_search_provider as wsp
+
+    monkeypatch.setattr(wsp, 'get_provider_env', lambda name: 'tok_from_provider_env')
+    monkeypatch.delenv('APIFY_API_TOKEN', raising=False)
+
+    from apify_hermes_agent_plugin.client import _resolve_apify_api_token
+
+    assert _resolve_apify_api_token() == 'tok_from_provider_env'
+
+
+def test_resolve_token_falls_back_to_hermes_cli_get_env_value(monkeypatch):
+    import agent.web_search_provider as wsp
+
+    monkeypatch.delattr(wsp, 'get_provider_env', raising=False)
+
+    import hermes_cli.config as hc_config
+
+    monkeypatch.setattr(hc_config, 'get_env_value', lambda name: 'tok_from_get_env_value')
+    monkeypatch.delenv('APIFY_API_TOKEN', raising=False)
+
+    from apify_hermes_agent_plugin.client import _resolve_apify_api_token
+
+    assert _resolve_apify_api_token() == 'tok_from_get_env_value'
+
+
+def test_resolve_token_falls_back_to_bare_os_getenv(monkeypatch):
+    import agent.web_search_provider as wsp
+
+    monkeypatch.delattr(wsp, 'get_provider_env', raising=False)
+
+    import hermes_cli.config as hc_config
+
+    monkeypatch.delattr(hc_config, 'get_env_value', raising=False)
+    monkeypatch.setenv('APIFY_API_TOKEN', 'tok_from_bare_env')
+
+    from apify_hermes_agent_plugin.client import _resolve_apify_api_token
+
+    assert _resolve_apify_api_token() == 'tok_from_bare_env'
