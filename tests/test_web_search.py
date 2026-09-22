@@ -6,8 +6,9 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+import pytest_asyncio
 
-from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider
+from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider, _reset_http_client_for_tests
 
 
 @pytest.fixture
@@ -31,6 +32,18 @@ def not_interrupted(monkeypatch):
 def api_token(monkeypatch):
     """Default: get_apify_api_token() returns a fake token."""
     monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_apify_api_token', lambda: 'tok_123')
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_http_client():
+    """Ensure each test starts and ends with no cached httpx client.
+
+    Guards against a cached client (bound to a previous test's event loop, or holding a
+    previous test's now-reverted mock transport) leaking across test functions.
+    """
+    await _reset_http_client_for_tests()
+    yield
+    await _reset_http_client_for_tests()
 
 
 @pytest.fixture
@@ -303,6 +316,122 @@ async def test_extract_multiple_urls_preserves_order(mock_web_fetch):
 
     assert [r['url'] for r in result] == urls
     assert [r['title'] for r in result] == urls
+
+
+@pytest.mark.asyncio
+async def test_extract_target_http_error_returns_structured_error(mock_web_fetch):
+    """response.status_code is the Actor's own status (200); fetch.httpStatusCode is the target's."""
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                'url': 'https://example.com/missing',
+                'fetch': {'loadedUrl': 'https://example.com/missing', 'httpStatusCode': 404},
+                'metadata': {'title': 'Not Found'},
+                'markdown': '# 404 Not Found',
+                'html': None,
+            },
+        )
+
+    mock_web_fetch(handler)
+
+    result = await ApifyWebSearchProvider().extract(['https://example.com/missing'])
+
+    assert result == [
+        {
+            'url': 'https://example.com/missing',
+            'title': '',
+            'content': '',
+            'raw_content': '',
+            'error': 'Target URL returned HTTP 404',
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_extract_redirect_target_blocked_by_website_policy(monkeypatch, mock_web_fetch):
+    """The input URL is allowed, but the Actor's server-side redirect lands on a blocked host."""
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                'url': 'https://allowed.example.com',
+                'fetch': {'loadedUrl': 'https://blocked.example.com/', 'httpStatusCode': 200},
+                'metadata': {'title': 'Secret'},
+                'markdown': '# secret content',
+                'html': None,
+            },
+        )
+
+    mock_web_fetch(handler)
+
+    def fake_check(url):
+        if 'blocked' in url:
+            return {
+                'url': url,
+                'host': 'blocked.example.com',
+                'rule': '*.example.com',
+                'source': 'config',
+                'message': f"Blocked by website policy: '{url}' matched rule",
+            }
+        return None
+
+    monkeypatch.setattr('tools.website_policy.check_website_access', fake_check)
+
+    result = await ApifyWebSearchProvider().extract(['https://allowed.example.com'])
+
+    assert result == [
+        {
+            'url': 'https://blocked.example.com/',
+            'title': '',
+            'content': '',
+            'raw_content': '',
+            'error': "Blocked by website policy: 'https://blocked.example.com/' matched rule",
+            'blocked_by_policy': {'host': 'blocked.example.com', 'rule': '*.example.com', 'source': 'config'},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_extract_reuses_http_client_across_calls(monkeypatch, mock_web_fetch):
+    from apify_hermes_agent_plugin.web_search import _get_http_client
+
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={
+                'url': 'https://example.com',
+                'fetch': {'loadedUrl': 'https://example.com', 'httpStatusCode': 200},
+                'metadata': {'title': 'Example'},
+                'markdown': '# Example',
+                'html': None,
+            },
+        )
+
+    mock_web_fetch(handler)
+
+    seen_clients = []
+
+    def spy_get_http_client():
+        client = _get_http_client()
+        seen_clients.append(client)
+        return client
+
+    monkeypatch.setattr('apify_hermes_agent_plugin.web_search._get_http_client', spy_get_http_client)
+
+    provider = ApifyWebSearchProvider()
+    await provider.extract(['https://example.com'])
+    await provider.extract(['https://example.com'])
+
+    assert call_count == 2
+    assert len(seen_clients) == 2
+    assert seen_clients[0] is seen_clients[1]
 
 
 @pytest.mark.asyncio

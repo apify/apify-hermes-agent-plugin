@@ -30,6 +30,36 @@ _FETCH_TIMEOUT_SECS = 600
 # headroom for a rare Standby cold start + a slow page.
 _HTTP_ERROR_STATUS = 400  # smallest HTTP status code that apify/web-fetch treats as a failure
 
+_HTTP_CLIENT: httpx.AsyncClient | None = None
+_HTTP_CLIENT_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Return a cached httpx.AsyncClient bound to the current event loop.
+
+    An AsyncClient's connection pool is bound to the loop it was created under; reusing one
+    across a different loop breaks it, so rebuild whenever the running loop changes. Otherwise
+    reuse the same client across extract() calls in one session so they share keep-alive
+    connections instead of paying a fresh TCP/TLS handshake every call. Authorization is
+    deliberately not baked in here (the token could differ across calls) — callers pass it
+    per-request instead.
+    """
+    global _HTTP_CLIENT, _HTTP_CLIENT_LOOP
+    loop = asyncio.get_running_loop()
+    if _HTTP_CLIENT is None or _HTTP_CLIENT_LOOP is not loop:
+        _HTTP_CLIENT = httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECS, headers=_HERMES_HEADERS)
+        _HTTP_CLIENT_LOOP = loop
+    return _HTTP_CLIENT
+
+
+async def _reset_http_client_for_tests() -> None:
+    """Close and drop the cached http client so tests can re-instantiate cleanly."""
+    global _HTTP_CLIENT, _HTTP_CLIENT_LOOP
+    if _HTTP_CLIENT is not None:
+        await _HTTP_CLIENT.aclose()
+    _HTTP_CLIENT = None
+    _HTTP_CLIENT_LOOP = None
+
 
 class ApifyWebSearchProvider(WebSearchProvider):
     """Apify web search backend — runs the apify~rag-web-browser Actor."""
@@ -98,68 +128,38 @@ class ApifyWebSearchProvider(WebSearchProvider):
         except Exception as exc:  # BLE001 ignored repo-wide — report to the caller, never raise
             return [_error_result(u, str(exc)) for u in urls]
 
-        headers = {**_HERMES_HEADERS, 'Authorization': f'Bearer {token}'}
+        headers = {'Authorization': f'Bearer {token}'}
+        client = _get_http_client()
 
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECS, headers=headers) as client:
-            # return_exceptions=True is a structural belt-and-braces guarantee: even if a future
-            # change to _fetch_one lets an exception slip through, one bad URL still can't crash
-            # the whole batch — it just becomes that URL's error result below.
-            results = await asyncio.gather(
-                *(self._fetch_one(client, url, formats) for url in urls), return_exceptions=True
-            )
+        # return_exceptions=True is a structural belt-and-braces guarantee: even if a future
+        # change to _fetch_one lets an exception slip through, one bad URL still can't crash
+        # the whole batch — it just becomes that URL's error result below.
+        results = await asyncio.gather(
+            *(self._fetch_one(client, url, formats, headers) for url in urls), return_exceptions=True
+        )
 
         return [
             _error_result(url, str(result)) if isinstance(result, BaseException) else result
             for url, result in zip(urls, results, strict=True)
         ]
 
-    async def _fetch_one(self, client: httpx.AsyncClient, url: str, formats: list[str]) -> dict[str, Any]:
+    async def _fetch_one(
+        self, client: httpx.AsyncClient, url: str, formats: list[str], headers: dict[str, str]
+    ) -> dict[str, Any]:
         """Fetch a single URL, never raising — failures come back as a structured error dict."""
         from tools.website_policy import check_website_access
 
         blocked = check_website_access(url)
         if blocked is not None:
-            return _error_result(
-                url,
-                blocked['message'],
-                blocked_by_policy={'host': blocked['host'], 'rule': blocked['rule'], 'source': blocked['source']},
-            )
+            return _blocked_result(url, blocked)
 
         try:
-            response = await client.post(_WEB_FETCH_URL, json={'url': url, 'formats': formats})
+            response = await client.post(_WEB_FETCH_URL, json={'url': url, 'formats': formats}, headers=headers)
         except Exception as exc:  # BLE001 ignored repo-wide — report to the caller, never raise
             logger.warning('Apify web fetch error for %r: %s', url, exc)
             return _error_result(url, str(exc))
 
-        try:
-            body = response.json()
-        except Exception as exc:  # malformed response body
-            return _error_result(url, f'Invalid response body: {exc}')
-
-        if not isinstance(body, dict):
-            return _error_result(url, 'Invalid response body: expected an object')
-
-        if response.status_code >= _HTTP_ERROR_STATUS:
-            message = _parse_web_fetch_error(response.status_code, body)
-            logger.warning('Apify web fetch failed for %r: %s', url, message)
-            return _error_result(url, message)
-
-        metadata = body.get('metadata')
-        metadata = metadata if isinstance(metadata, dict) else {}
-        fetch = body.get('fetch')
-        fetched_url = fetch.get('loadedUrl') if isinstance(fetch, dict) else None
-        content = body.get(formats[0])
-        content = content if isinstance(content, str) else ''
-        title = metadata.get('title')
-        title = title if isinstance(title, str) else ''
-
-        return {
-            'url': fetched_url or url,
-            'title': title,
-            'content': content,
-            'raw_content': content,
-            'metadata': metadata,
-        }
+        return _build_fetch_result(url, response, formats)
 
     def get_setup_schema(self) -> dict[str, Any]:
         """Return the setup configuration schema for this provider."""
@@ -201,6 +201,72 @@ def _normalize_results(items: list[Any], limit: int) -> list[dict[str, Any]]:
 def _error_result(url: str, message: str, **extra: Any) -> dict[str, Any]:
     """Build the standard per-URL extract() error result, with optional extra fields."""
     return {'url': url, 'title': '', 'content': '', 'raw_content': '', 'error': message, **extra}
+
+
+def _blocked_result(url: str, blocked: dict[str, str]) -> dict[str, Any]:
+    """Build the structured error result for a website-policy block (pre-fetch or post-redirect)."""
+    return _error_result(
+        url,
+        blocked['message'],
+        blocked_by_policy={'host': blocked['host'], 'rule': blocked['rule'], 'source': blocked['source']},
+    )
+
+
+def _coerce_dict(value: Any) -> dict[str, Any]:
+    """Return value if it's a dict, else an empty dict."""
+    return value if isinstance(value, dict) else {}
+
+
+def _coerce_str(value: Any, default: str = '') -> str:
+    """Return value if it's a str, else default."""
+    return value if isinstance(value, str) else default
+
+
+def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) -> dict[str, Any]:
+    """Turn a completed apify/web-fetch HTTP response into a result or structured error dict."""
+    from tools.website_policy import check_website_access
+
+    try:
+        body = response.json()
+    except Exception as exc:  # malformed response body
+        return _error_result(url, f'Invalid response body: {exc}')
+
+    if not isinstance(body, dict):
+        return _error_result(url, 'Invalid response body: expected an object')
+
+    if response.status_code >= _HTTP_ERROR_STATUS:
+        message = _parse_web_fetch_error(response.status_code, body)
+        logger.warning('Apify web fetch failed for %r: %s', url, message)
+        return _error_result(url, message)
+
+    fetch = _coerce_dict(body.get('fetch'))
+    fetched_url = _coerce_str(fetch.get('loadedUrl')) or url
+    metadata = _coerce_dict(body.get('metadata'))
+    content = _coerce_str(body.get(formats[0]))
+    title = _coerce_str(metadata.get('title'))
+
+    # The Actor may have followed a server-side redirect our pre-fetch check never saw the
+    # final host for. Re-check policy now, and do this *before* looking at the target's real
+    # HTTP status below — a blocklisted host must not leak even an error page.
+    if fetched_url != url:
+        redirect_blocked = check_website_access(fetched_url)
+        if redirect_blocked is not None:
+            return _blocked_result(fetched_url, redirect_blocked)
+
+    # response.status_code is the Actor invocation's own status — apify/web-fetch returns 200
+    # whenever the Actor ran successfully, even if the *target* page 404'd/500'd. The target's
+    # real status lives in fetch.httpStatusCode.
+    http_status_code = fetch.get('httpStatusCode')
+    if isinstance(http_status_code, int) and http_status_code >= _HTTP_ERROR_STATUS:
+        return _error_result(fetched_url, f'Target URL returned HTTP {http_status_code}')
+
+    return {
+        'url': fetched_url,
+        'title': title,
+        'content': content,
+        'raw_content': content,
+        'metadata': metadata,
+    }
 
 
 def _parse_web_fetch_error(status_code: int, body: dict[str, Any]) -> str:
