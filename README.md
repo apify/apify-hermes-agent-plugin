@@ -41,31 +41,20 @@ Then run `hermes apify-setup` as above - it still takes care of enabling the too
 - `apify_start` - fire-and-forget batch Actor starts (up to 10 per call).
 - `apify_collect` - poll run statuses and return completed dataset results.
 
-## Web search
+## Web search & fetch
 
-This plugin also registers `apify` as a Hermes Agent web search backend, running the
-[RAG Web Browser](https://apify.com/apify/rag-web-browser) Actor. It uses the same
-`APIFY_API_TOKEN` configured above - no separate setup needed.
+This plugin also registers `apify` as a Hermes Agent web search and web-fetch backend,
+running the [RAG Web Browser](https://apify.com/apify/rag-web-browser) Actor for search and
+the [Web Fetch](https://apify.com/apify/web-fetch) Actor for content extraction. Both use the
+same `APIFY_API_TOKEN` configured above - no separate setup needed.
 
-To use it, set it as the search backend in `~/.hermes/config.yaml`:
+To use them, set the search and/or extract backend in `~/.hermes/config.yaml`:
 
     web:
       search_backend: apify
-
-or select it interactively via `hermes tools`.
-
-## Web fetch
-
-This plugin also registers `apify` as a Hermes Agent web-fetch backend, running the
-[Web Fetch](https://apify.com/apify/web-fetch) Actor. It uses the same `APIFY_API_TOKEN`
-configured above - no separate setup needed.
-
-To use it, set it as the extract backend in `~/.hermes/config.yaml`:
-
-    web:
       extract_backend: apify
 
-or select it interactively via `hermes tools`.
+or select `apify` interactively via `hermes tools`.
 
 ## Development
 
