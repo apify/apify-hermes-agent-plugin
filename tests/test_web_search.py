@@ -76,7 +76,7 @@ def test_get_setup_schema_includes_token_env_var():
     env_var_keys = [e['key'] for e in schema['env_vars']]
     assert 'APIFY_API_TOKEN' in env_var_keys
     assert schema['name'] == 'Apify'
-    assert schema['tag'] == "Google Search via Apify's RAG Web Browser Actor — pay-as-you-go platform usage."
+    assert schema['tag'] == 'Google Search and web content extraction via Apify — pay-as-you-go platform usage.'
     assert schema['env_vars'][0]['url'] == (
         'https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations'
     )
@@ -252,6 +252,7 @@ def test_search_returns_error_when_client_unavailable(monkeypatch):
 async def test_extract_single_url_success(mock_web_fetch):
     def handler(request):
         assert request.headers['authorization'] == 'Bearer tok_123'
+        assert request.headers['x-apify-integration-platform'] == 'hermes-agent'
         return httpx.Response(
             200,
             json={
@@ -323,6 +324,26 @@ async def test_extract_non_dict_body_returns_structured_error(mock_web_fetch):
             'content': '',
             'raw_content': '',
             'error': 'Invalid response body: expected an object',
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_extract_malformed_nested_fields_fall_back_to_safe_defaults(mock_web_fetch):
+    def handler(request):
+        return httpx.Response(200, json={'fetch': 'not-a-dict', 'metadata': 'also-not-a-dict', 'markdown': 123})
+
+    mock_web_fetch(handler)
+
+    result = await ApifyWebSearchProvider().extract(['https://example.com'])
+
+    assert result == [
+        {
+            'url': 'https://example.com',
+            'title': '',
+            'content': '',
+            'raw_content': '',
+            'metadata': {},
         }
     ]
 
@@ -408,7 +429,13 @@ async def test_extract_blocked_by_website_policy(monkeypatch, mock_web_fetch):
     mock_web_fetch(handler)
     monkeypatch.setattr(
         'tools.website_policy.check_website_access',
-        lambda url: {'message': f"Blocked by website policy: '{url}' matched rule"},
+        lambda url: {
+            'url': url,
+            'host': 'blocked.example.com',
+            'rule': '*.example.com',
+            'source': 'config',
+            'message': f"Blocked by website policy: '{url}' matched rule",
+        },
     )
 
     result = await ApifyWebSearchProvider().extract(['https://blocked.example.com'])
@@ -421,6 +448,7 @@ async def test_extract_blocked_by_website_policy(monkeypatch, mock_web_fetch):
             'content': '',
             'raw_content': '',
             'error': "Blocked by website policy: 'https://blocked.example.com' matched rule",
+            'blocked_by_policy': {'host': 'blocked.example.com', 'rule': '*.example.com', 'source': 'config'},
         }
     ]
 

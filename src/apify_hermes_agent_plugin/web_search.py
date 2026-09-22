@@ -10,7 +10,12 @@ from typing import Any
 import httpx
 from agent.web_search_provider import WebSearchProvider
 
-from apify_hermes_agent_plugin.client import check_apify_api_key, get_apify_api_token, get_apify_client
+from apify_hermes_agent_plugin.client import (
+    _HERMES_HEADERS,
+    check_apify_api_key,
+    get_apify_api_token,
+    get_apify_client,
+)
 from apify_hermes_agent_plugin.tools import _attr
 
 logger = logging.getLogger(__name__)
@@ -84,12 +89,29 @@ class ApifyWebSearchProvider(WebSearchProvider):
         from tools.interrupt import is_interrupted
 
         if is_interrupted():
-            return [{'url': u, 'title': '', 'content': '', 'raw_content': '', 'error': 'Interrupted'} for u in urls]
+            return [_error_result(u, 'Interrupted') for u in urls]
 
         formats = ['html'] if kwargs.get('format') == 'html' else ['markdown']
 
-        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECS) as client:
-            return list(await asyncio.gather(*(self._fetch_one(client, url, formats) for url in urls)))
+        try:
+            token = get_apify_api_token()
+        except Exception as exc:  # BLE001 ignored repo-wide — report to the caller, never raise
+            return [_error_result(u, str(exc)) for u in urls]
+
+        headers = {**_HERMES_HEADERS, 'Authorization': f'Bearer {token}'}
+
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECS, headers=headers) as client:
+            # return_exceptions=True is a structural belt-and-braces guarantee: even if a future
+            # change to _fetch_one lets an exception slip through, one bad URL still can't crash
+            # the whole batch — it just becomes that URL's error result below.
+            results = await asyncio.gather(
+                *(self._fetch_one(client, url, formats) for url in urls), return_exceptions=True
+            )
+
+        return [
+            _error_result(url, str(result)) if isinstance(result, BaseException) else result
+            for url, result in zip(urls, results, strict=True)
+        ]
 
     async def _fetch_one(self, client: httpx.AsyncClient, url: str, formats: list[str]) -> dict[str, Any]:
         """Fetch a single URL, never raising — failures come back as a structured error dict."""
@@ -97,48 +119,43 @@ class ApifyWebSearchProvider(WebSearchProvider):
 
         blocked = check_website_access(url)
         if blocked is not None:
-            return {'url': url, 'title': '', 'content': '', 'raw_content': '', 'error': blocked['message']}
+            return _error_result(
+                url,
+                blocked['message'],
+                blocked_by_policy={'host': blocked['host'], 'rule': blocked['rule'], 'source': blocked['source']},
+            )
 
         try:
-            token = get_apify_api_token()
-            response = await client.post(
-                _WEB_FETCH_URL,
-                json={'url': url, 'formats': formats},
-                headers={'Authorization': f'Bearer {token}'},
-            )
+            response = await client.post(_WEB_FETCH_URL, json={'url': url, 'formats': formats})
         except Exception as exc:  # BLE001 ignored repo-wide — report to the caller, never raise
-            return {'url': url, 'title': '', 'content': '', 'raw_content': '', 'error': str(exc)}
+            logger.warning('Apify web fetch error for %r: %s', url, exc)
+            return _error_result(url, str(exc))
 
         try:
             body = response.json()
         except Exception as exc:  # malformed response body
-            return {'url': url, 'title': '', 'content': '', 'raw_content': '', 'error': f'Invalid response body: {exc}'}
+            return _error_result(url, f'Invalid response body: {exc}')
 
         if not isinstance(body, dict):
-            return {
-                'url': url,
-                'title': '',
-                'content': '',
-                'raw_content': '',
-                'error': 'Invalid response body: expected an object',
-            }
+            return _error_result(url, 'Invalid response body: expected an object')
 
         if response.status_code >= _HTTP_ERROR_STATUS:
-            return {
-                'url': url,
-                'title': '',
-                'content': '',
-                'raw_content': '',
-                'error': _parse_web_fetch_error(response.status_code, body),
-            }
+            message = _parse_web_fetch_error(response.status_code, body)
+            logger.warning('Apify web fetch failed for %r: %s', url, message)
+            return _error_result(url, message)
 
-        metadata = body.get('metadata') or {}
-        content = body.get(formats[0]) or ''
-        fetched_url = (body.get('fetch') or {}).get('loadedUrl') or url
+        metadata = body.get('metadata')
+        metadata = metadata if isinstance(metadata, dict) else {}
+        fetch = body.get('fetch')
+        fetched_url = fetch.get('loadedUrl') if isinstance(fetch, dict) else None
+        content = body.get(formats[0])
+        content = content if isinstance(content, str) else ''
+        title = metadata.get('title')
+        title = title if isinstance(title, str) else ''
 
         return {
-            'url': fetched_url,
-            'title': metadata.get('title') or '',
+            'url': fetched_url or url,
+            'title': title,
             'content': content,
             'raw_content': content,
             'metadata': metadata,
@@ -149,7 +166,7 @@ class ApifyWebSearchProvider(WebSearchProvider):
         return {
             'name': 'Apify',
             'badge': 'paid',
-            'tag': "Google Search via Apify's RAG Web Browser Actor — pay-as-you-go platform usage.",
+            'tag': 'Google Search and web content extraction via Apify — pay-as-you-go platform usage.',
             'env_vars': [
                 {
                     'key': 'APIFY_API_TOKEN',
@@ -179,6 +196,11 @@ def _normalize_results(items: list[Any], limit: int) -> list[dict[str, Any]]:
             }
         )
     return results
+
+
+def _error_result(url: str, message: str, **extra: Any) -> dict[str, Any]:
+    """Build the standard per-URL extract() error result, with optional extra fields."""
+    return {'url': url, 'title': '', 'content': '', 'raw_content': '', 'error': message, **extra}
 
 
 def _parse_web_fetch_error(status_code: int, body: dict[str, Any]) -> str:
