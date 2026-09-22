@@ -102,6 +102,48 @@ def test_search_returns_normalized_results(mock_client):
     mock_client.run.assert_called_once_with('run_1')
 
 
+def test_search_clamps_limit_above_actor_max(mock_client):
+    run = MagicMock()
+    run.id = 'run_1'
+    mock_client.actor.return_value.start.return_value = run
+
+    finished_run = MagicMock()
+    finished_run.status = 'SUCCEEDED'
+    finished_run.default_dataset_id = 'dataset_1'
+    mock_client.run.return_value.wait_for_finish.return_value = finished_run
+
+    dataset_result = MagicMock()
+    dataset_result.items = []
+    mock_client.dataset.return_value.list_items.return_value = dataset_result
+
+    ApifyWebSearchProvider().search('apify', limit=250)
+
+    mock_client.actor.return_value.start.assert_called_once_with(
+        run_input={'query': 'apify', 'maxResults': 100, 'requestTimeoutSecs': 60}
+    )
+
+
+def test_search_clamps_limit_below_actor_min(mock_client):
+    run = MagicMock()
+    run.id = 'run_1'
+    mock_client.actor.return_value.start.return_value = run
+
+    finished_run = MagicMock()
+    finished_run.status = 'SUCCEEDED'
+    finished_run.default_dataset_id = 'dataset_1'
+    mock_client.run.return_value.wait_for_finish.return_value = finished_run
+
+    dataset_result = MagicMock()
+    dataset_result.items = []
+    mock_client.dataset.return_value.list_items.return_value = dataset_result
+
+    ApifyWebSearchProvider().search('apify', limit=0)
+
+    mock_client.actor.return_value.start.assert_called_once_with(
+        run_input={'query': 'apify', 'maxResults': 1, 'requestTimeoutSecs': 60}
+    )
+
+
 def test_search_truncates_long_descriptions(mock_client):
     run = MagicMock()
     run.id = 'run_1'

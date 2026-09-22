@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _RAG_ACTOR = 'apify~rag-web-browser'
 _MAX_DESCRIPTION_CHARS = 500
 _SEARCH_WAIT_SECS = 90  # 60s request timeout + startup headroom
+_MAX_RESULTS = 100  # apify~rag-web-browser's maxResults input schema bound (min 1, max 100)
 
 
 class ApifyWebSearchProvider(WebSearchProvider):
@@ -47,9 +48,10 @@ class ApifyWebSearchProvider(WebSearchProvider):
             return {'success': False, 'error': 'Interrupted'}
 
         try:
+            clamped_limit = max(1, min(int(limit), _MAX_RESULTS))
             client = get_apify_client()
             run = client.actor(_RAG_ACTOR).start(
-                run_input={'query': query, 'maxResults': limit, 'requestTimeoutSecs': 60}
+                run_input={'query': query, 'maxResults': clamped_limit, 'requestTimeoutSecs': 60}
             )
             finished = client.run(_attr(run, 'id')).wait_for_finish(wait_duration=timedelta(seconds=_SEARCH_WAIT_SECS))
             if finished is None or _attr(finished, 'status') not in {'SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'}:
@@ -64,7 +66,7 @@ class ApifyWebSearchProvider(WebSearchProvider):
             logger.warning('Apify web search error for %r: %s', query, exc)
             return {'success': False, 'error': f'Apify search failed: {exc}'}
 
-        return {'success': True, 'data': {'web': _normalize_results(items, limit)}}
+        return {'success': True, 'data': {'web': _normalize_results(items, clamped_limit)}}
 
     def get_setup_schema(self) -> dict[str, Any]:
         """Return the setup configuration schema for this provider."""
