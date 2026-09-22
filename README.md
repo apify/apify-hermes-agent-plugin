@@ -54,6 +54,19 @@ To use it, set it as the search backend in `~/.hermes/config.yaml`:
 
 or select it interactively via `hermes tools`.
 
+## Web fetch
+
+This plugin also registers `apify` as a Hermes Agent web-fetch backend, running the
+[Web Fetch](https://apify.com/apify/web-fetch) Actor. It uses the same `APIFY_API_TOKEN`
+configured above - no separate setup needed.
+
+To use it, set it as the extract backend in `~/.hermes/config.yaml`:
+
+    web:
+      extract_backend: apify
+
+or select it interactively via `hermes tools`.
+
 ## Development
 
     pip install -e ".[dev]"
