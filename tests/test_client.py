@@ -29,7 +29,22 @@ def _bare_env_resolution(monkeypatch):
     """
     import agent.web_search_provider as wsp
 
-    monkeypatch.setattr(wsp, 'get_provider_env', lambda name: os.getenv(name, '').strip())
+    monkeypatch.setattr(wsp, 'get_provider_env', lambda name: os.getenv(name, '').strip(), raising=False)
+
+
+def test_get_api_token_raises_without_token(monkeypatch):
+    monkeypatch.delenv('APIFY_API_TOKEN', raising=False)
+    from apify_hermes_agent_plugin.client import get_apify_api_token
+
+    with pytest.raises(ValueError, match='APIFY_API_TOKEN'):
+        get_apify_api_token()
+
+
+def test_get_api_token_returns_value(monkeypatch):
+    monkeypatch.setenv('APIFY_API_TOKEN', 'tok_123')
+    from apify_hermes_agent_plugin.client import get_apify_api_token
+
+    assert get_apify_api_token() == 'tok_123'
 
 
 def test_check_api_key_false_when_unset(monkeypatch):
