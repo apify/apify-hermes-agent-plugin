@@ -1,0 +1,183 @@
+name: bump-catalog-pr
+
+# Manual only. Bumps this plugin's pinned commit (and version/image) in the Hermes plugin
+# catalog (NousResearch/hermes-agent, plugin-catalog/apify.yaml) and opens a DRAFT PR there via
+# the apify/hermes-agent fork. It never marks the PR ready for review or merges it - the
+# catalog's admission policy requires a human-reviewed PR for every SHA bump (see
+# README.md#updating-the-hermes-plugin-catalog-listing).
+#
+# sha/version default to the latest GitHub Release on this repo; pass them explicitly to
+# override (e.g. to re-bump to an older release).
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to pin in the catalog. Leave empty to use the latest GitHub Release's commit."
+        required: false
+        type: string
+        default: ""
+      version:
+        description: "Version label for the catalog entry. Leave empty to use the latest GitHub Release's tag."
+        required: false
+        type: string
+        default: ""
+      image:
+        description: "Raw GitHub URL of the banner image, pinned to the sha above. Leave empty to keep the existing value."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_REPO: NousResearch/hermes-agent
+  FORK_REPO: apify/hermes-agent
+  CATALOG_FILE: plugin-catalog/apify.yaml
+  GH_TOKEN: ${{ secrets.APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN }}
+
+jobs:
+  bump-catalog-pr:
+    name: Open draft catalog PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve sha/version (defaulting to the latest release)
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA_OVERRIDE: ${{ inputs.sha }}
+          VERSION_OVERRIDE: ${{ inputs.version }}
+        run: |
+          sha="$SHA_OVERRIDE"
+          version="$VERSION_OVERRIDE"
+
+          if [[ -z "$sha" || -z "$version" ]]; then
+            tag=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+            echo "Latest release tag: ${tag}"
+          fi
+
+          if [[ -z "$version" ]]; then
+            version="${tag#v}"
+          fi
+
+          if [[ -z "$sha" ]]; then
+            ref=$(gh api "repos/${{ github.repository }}/git/ref/tags/${tag}")
+            obj_type=$(jq -r .object.type <<<"$ref")
+            obj_sha=$(jq -r .object.sha <<<"$ref")
+            if [[ "$obj_type" == "tag" ]]; then
+              # Annotated tag object: one more level of indirection to the commit it points at.
+              sha=$(gh api "repos/${{ github.repository }}/git/tags/${obj_sha}" --jq .object.sha)
+            else
+              sha="$obj_sha"
+            fi
+          fi
+
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::resolved sha is not a full 40-character lowercase hex commit: ${sha}"
+            exit 1
+          fi
+
+          {
+            echo "sha=${sha}"
+            echo "sha_short=${sha:0:7}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Confirm sha exists on this repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/commits/${{ steps.resolve.outputs.sha }}" --jq .sha >/dev/null
+
+      - name: Configure git identity and credentials
+        run: |
+          git config --global user.name "Apify Service Account"
+          git config --global user.email "64261774+apify-service-account@users.noreply.github.com"
+          gh auth setup-git
+
+      - name: Clone upstream catalog
+        run: git clone --depth 1 "https://github.com/${UPSTREAM_REPO}.git" upstream
+
+      - name: Create branch
+        working-directory: upstream
+        env:
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
+        run: git checkout -b "bump-apify-${SHA_SHORT}"
+
+      - name: Bump sha/version/image in the catalog entry
+        working-directory: upstream
+        env:
+          NEW_SHA: ${{ steps.resolve.outputs.sha }}
+          NEW_VERSION: ${{ steps.resolve.outputs.version }}
+          NEW_IMAGE: ${{ inputs.image }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(os.environ["CATALOG_FILE"])
+          text = path.read_text()
+
+          new_sha = os.environ["NEW_SHA"]
+          new_version = os.environ["NEW_VERSION"].strip()
+          new_image = os.environ["NEW_IMAGE"].strip()
+
+          text, n = re.subn(r"(?m)^sha:.*$", f"sha: {new_sha}", text, count=1)
+          if n != 1:
+              sys.exit(f"expected exactly one top-level 'sha:' line, found {n}")
+
+          def upsert(text: str, key: str, line: str) -> str:
+              pattern = rf"(?m)^{key}:.*$"
+              if re.search(pattern, text):
+                  return re.sub(pattern, line, text, count=1)
+              # New key: insert right before the mandatory 'capabilities:' block,
+              # matching the field order documented in plugin-catalog/README.md.
+              return re.sub(r"(?m)^capabilities:", f"{line}\ncapabilities:", text, count=1)
+
+          if new_version:
+              text = upsert(text, "version", f'version: "{new_version}"')
+          if new_image:
+              text = upsert(text, "image", f"image: {new_image}")
+
+          path.write_text(text)
+          PYEOF
+
+      - name: Show diff
+        working-directory: upstream
+        run: git diff -- "${CATALOG_FILE}"
+
+      - name: Commit
+        working-directory: upstream
+        env:
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
+        run: |
+          git add "${CATALOG_FILE}"
+          git commit -m "chore: bump apify pin to ${SHA_SHORT}"
+
+      - name: Push to apify/hermes-agent fork
+        working-directory: upstream
+        env:
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
+        run: git push "https://github.com/${FORK_REPO}.git" "HEAD:bump-apify-${SHA_SHORT}"
+
+      - name: Open draft PR upstream
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          SHA_SHORT: ${{ steps.resolve.outputs.sha_short }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          gh pr create \
+            --repo "${UPSTREAM_REPO}" \
+            --base main \
+            --head "apify:bump-apify-${SHA_SHORT}" \
+            --draft \
+            --title "chore: bump apify pin to ${SHA_SHORT}" \
+            --body "$(cat <<EOF
+          Bumps the \`apify\` catalog entry to version \`${VERSION}\`, pinned commit [\`${SHA_SHORT}\`](https://github.com/${{ github.repository }}/commit/${SHA}).
+
+          Opened as a draft by [\`bump-catalog-pr\`](https://github.com/${{ github.repository }}/actions/workflows/bump-catalog-pr.yml) in ${{ github.repository }}, triggered manually by @${{ github.actor }}. Left as a draft for human review before merge, per the catalog's admission policy.
+          EOF
+          )"
