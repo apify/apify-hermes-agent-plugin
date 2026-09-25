@@ -518,6 +518,38 @@ async def test_extract_error_nested_error_shape(mock_web_fetch):
 
 
 @pytest.mark.asyncio
+async def test_extract_non_json_error_body_reports_status(mock_web_fetch):
+    def handler(request):
+        return httpx.Response(502, content=b'<html>Bad Gateway</html>', headers={'content-type': 'text/html'})
+
+    mock_web_fetch(handler)
+
+    result = await ApifyWebSearchProvider().extract(['https://example.com'])
+
+    assert result == [
+        {
+            'url': 'https://example.com',
+            'title': '',
+            'content': '',
+            'raw_content': '',
+            'error': 'Apify web fetch failed with status 502',
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_extract_non_dict_error_body_reports_status(mock_web_fetch):
+    def handler(request):
+        return httpx.Response(500, json=['unexpected'])
+
+    mock_web_fetch(handler)
+
+    result = await ApifyWebSearchProvider().extract(['https://example.com'])
+
+    assert result[0]['error'] == 'Apify web fetch failed with status 500'
+
+
+@pytest.mark.asyncio
 async def test_extract_null_format_returns_empty_content(mock_web_fetch):
     def handler(request):
         return httpx.Response(

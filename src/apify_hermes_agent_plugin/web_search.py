@@ -226,6 +226,13 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     """Turn a completed apify/web-fetch HTTP response into a result or structured error dict."""
     from tools.website_policy import check_website_access
 
+    # Check the status before parsing: error responses aren't guaranteed to be JSON (e.g. an
+    # HTML 502 from the Standby gateway), and that must still surface as a status error.
+    if response.status_code >= _HTTP_ERROR_STATUS:
+        message = _parse_web_fetch_error(response)
+        logger.warning('Apify web fetch failed for %r: %s', url, message)
+        return _error_result(url, message)
+
     try:
         body = response.json()
     except Exception as exc:  # malformed response body
@@ -233,11 +240,6 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
 
     if not isinstance(body, dict):
         return _error_result(url, 'Invalid response body: expected an object')
-
-    if response.status_code >= _HTTP_ERROR_STATUS:
-        message = _parse_web_fetch_error(response.status_code, body)
-        logger.warning('Apify web fetch failed for %r: %s', url, message)
-        return _error_result(url, message)
 
     fetch = _coerce_dict(body.get('fetch'))
     fetched_url = _coerce_str(fetch.get('loadedUrl')) or url
@@ -269,11 +271,22 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     }
 
 
-def _parse_web_fetch_error(status_code: int, body: dict[str, Any]) -> str:
-    """Parse either of apify/web-fetch's two error response shapes into a message."""
+def _parse_web_fetch_error(response: httpx.Response) -> str:
+    """Parse either of apify/web-fetch's two error response shapes into a message.
+
+    Falls back to a generic status message when the body isn't a JSON object.
+    """
+    fallback = f'Apify web fetch failed with status {response.status_code}'
+    try:
+        body = response.json()
+    except Exception:  # non-JSON error body
+        return fallback
+    if not isinstance(body, dict):
+        return fallback
+
     error = body.get('error')
     if isinstance(error, str) and isinstance(body.get('code'), str):
         return f'{error} (code: {body["code"]})'
     if isinstance(error, dict) and isinstance(error.get('message'), str):
         return error['message']
-    return f'Apify web fetch failed with status {status_code}'
+    return fallback
