@@ -52,18 +52,27 @@ def check_apify_api_key() -> bool:
     return bool(_resolve_apify_api_token())
 
 
-def get_apify_client() -> Any:
-    """Return a cached ApifyClient built from APIFY_API_TOKEN.
+def get_apify_api_token() -> str:
+    """Return APIFY_API_TOKEN, resolved across hermes-agent versions.
 
     Raises ValueError when the token is not set.
     """
-    global _CLIENT, _CLIENT_CONFIG
     api_token = _resolve_apify_api_token()
     if not api_token:
         raise ValueError(
             'Apify tools are not configured. Set APIFY_API_TOKEN '
             '(get one at https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations).'
         )
+    return api_token
+
+
+def get_apify_client() -> Any:
+    """Return a cached ApifyClient built from APIFY_API_TOKEN.
+
+    Raises ValueError when the token is not set.
+    """
+    global _CLIENT, _CLIENT_CONFIG
+    api_token = get_apify_api_token()
     client_config = ('direct', api_token)
     if _CLIENT is not None and client_config == _CLIENT_CONFIG:
         return _CLIENT
