@@ -6,9 +6,8 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-import pytest_asyncio
 
-from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider, _reset_http_client_for_tests
+from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider
 
 
 @pytest.fixture
@@ -32,18 +31,6 @@ def not_interrupted(monkeypatch):
 def api_token(monkeypatch):
     """Default: get_apify_api_token() returns a fake token."""
     monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_apify_api_token', lambda: 'tok_123')
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def reset_http_client():
-    """Ensure each test starts and ends with no cached httpx client.
-
-    Guards against a cached client (bound to a previous test's event loop, or holding a
-    previous test's now-reverted mock transport) leaking across test functions.
-    """
-    await _reset_http_client_for_tests()
-    yield
-    await _reset_http_client_for_tests()
 
 
 @pytest.fixture
@@ -395,14 +382,8 @@ async def test_extract_redirect_target_blocked_by_website_policy(monkeypatch, mo
 
 
 @pytest.mark.asyncio
-async def test_extract_reuses_http_client_across_calls(monkeypatch, mock_web_fetch):
-    from apify_hermes_agent_plugin.web_search import _get_http_client
-
-    call_count = 0
-
+async def test_extract_closes_http_client_after_each_call(monkeypatch):
     def handler(request):
-        nonlocal call_count
-        call_count += 1
         return httpx.Response(
             200,
             json={
@@ -414,24 +395,24 @@ async def test_extract_reuses_http_client_across_calls(monkeypatch, mock_web_fet
             },
         )
 
-    mock_web_fetch(handler)
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+    created: list[httpx.AsyncClient] = []
 
-    seen_clients = []
-
-    def spy_get_http_client():
-        client = _get_http_client()
-        seen_clients.append(client)
+    def spy_async_client(*a, **kw):
+        client = real_async_client(*a, transport=transport, **kw)
+        created.append(client)
         return client
 
-    monkeypatch.setattr('apify_hermes_agent_plugin.web_search._get_http_client', spy_get_http_client)
+    monkeypatch.setattr('apify_hermes_agent_plugin.web_search.httpx.AsyncClient', spy_async_client)
 
     provider = ApifyWebSearchProvider()
-    await provider.extract(['https://example.com'])
+    await provider.extract(['https://example.com', 'https://example.org'])
     await provider.extract(['https://example.com'])
 
-    assert call_count == 2
-    assert len(seen_clients) == 2
-    assert seen_clients[0] is seen_clients[1]
+    # One client per extract() call (shared across that batch's URLs), closed when it returns.
+    assert len(created) == 2
+    assert all(client.is_closed for client in created)
 
 
 @pytest.mark.asyncio

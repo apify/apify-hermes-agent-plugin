@@ -30,36 +30,6 @@ _FETCH_TIMEOUT_SECS = 600
 # headroom for a rare Standby cold start + a slow page.
 _HTTP_ERROR_STATUS = 400  # smallest HTTP status code that apify/web-fetch treats as a failure
 
-_HTTP_CLIENT: httpx.AsyncClient | None = None
-_HTTP_CLIENT_LOOP: asyncio.AbstractEventLoop | None = None
-
-
-def _get_http_client() -> httpx.AsyncClient:
-    """Return a cached httpx.AsyncClient bound to the current event loop.
-
-    An AsyncClient's connection pool is bound to the loop it was created under; reusing one
-    across a different loop breaks it, so rebuild whenever the running loop changes. Otherwise
-    reuse the same client across extract() calls in one session so they share keep-alive
-    connections instead of paying a fresh TCP/TLS handshake every call. Authorization is
-    deliberately not baked in here (the token could differ across calls) — callers pass it
-    per-request instead.
-    """
-    global _HTTP_CLIENT, _HTTP_CLIENT_LOOP
-    loop = asyncio.get_running_loop()
-    if _HTTP_CLIENT is None or _HTTP_CLIENT_LOOP is not loop:
-        _HTTP_CLIENT = httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECS, headers=_HERMES_HEADERS)
-        _HTTP_CLIENT_LOOP = loop
-    return _HTTP_CLIENT
-
-
-async def _reset_http_client_for_tests() -> None:
-    """Close and drop the cached http client so tests can re-instantiate cleanly."""
-    global _HTTP_CLIENT, _HTTP_CLIENT_LOOP
-    if _HTTP_CLIENT is not None:
-        await _HTTP_CLIENT.aclose()
-    _HTTP_CLIENT = None
-    _HTTP_CLIENT_LOOP = None
-
 
 class ApifyWebSearchProvider(WebSearchProvider):
     """Apify web search backend — runs the apify~rag-web-browser Actor."""
@@ -129,14 +99,18 @@ class ApifyWebSearchProvider(WebSearchProvider):
             return [_error_result(u, str(exc)) for u in urls]
 
         headers = {'Authorization': f'Bearer {token}'}
-        client = _get_http_client()
 
+        # One client per call, shared by every URL in the batch. Not cached across calls: a
+        # client's connection pool is bound to the event loop it was created under, and
+        # hermes-agent may run each tool call on a different (sometimes disposable) loop, where
+        # a cached client could neither be reused nor cleanly closed.
         # return_exceptions=True is a structural belt-and-braces guarantee: even if a future
         # change to _fetch_one lets an exception slip through, one bad URL still can't crash
         # the whole batch — it just becomes that URL's error result below.
-        results = await asyncio.gather(
-            *(self._fetch_one(client, url, formats, headers) for url in urls), return_exceptions=True
-        )
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECS, headers=_HERMES_HEADERS) as client:
+            results = await asyncio.gather(
+                *(self._fetch_one(client, url, formats, headers) for url in urls), return_exceptions=True
+            )
 
         return [
             _error_result(url, str(result)) if isinstance(result, BaseException) else result
