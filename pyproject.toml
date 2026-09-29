@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apify-hermes-agent-plugin"
-version = "0.1.3"
+version = "0.1.4"
 description = "Hermes Agent plugin for Apify, the world's largest marketplace for AI tools — discover, run, and collect results from Actors, all from natural language"
 authors = [{ name = "Apify Technologies s.r.o.", email = "support@apify.com" }]
 readme = "README.md"
@@ -53,6 +53,11 @@ apify = "apify_hermes_agent_plugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Non-.py assets aren't bundled by packages.find alone — without this, skills/actor-routing/SKILL.md
+# would exist in an editable install but silently vanish from a real `pip install` wheel.
+apify_hermes_agent_plugin = ["skills/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

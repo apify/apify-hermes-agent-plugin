@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from apify_hermes_agent_plugin.cli import apify_setup_command, register_cli
@@ -22,9 +23,11 @@ _TOOLS = (
     ('apify_collect', _COLLECT_SCHEMA, collect_handler_str, '📦', True),
 )
 
+_ACTOR_ROUTING_SKILL_PATH = Path(__file__).parent / 'skills' / 'actor-routing' / 'SKILL.md'
+
 
 def register(ctx: Any) -> None:
-    """Register the three Apify Actor tools, the web search provider, and the CLI setup command.
+    """Register the Apify Actor tools, web search provider, actor-routing skill, and CLI setup command.
 
     Called once by the Hermes plugin loader.
     """
@@ -49,3 +52,9 @@ def register(ctx: Any) -> None:
     )
 
     ctx.register_web_search_provider(ApifyWebSearchProvider())
+
+    ctx.register_skill(
+        name='actor-routing',
+        path=_ACTOR_ROUTING_SKILL_PATH,
+        description='Curated Actor picks for common scraping tasks — load before apify_discover.',
+    )

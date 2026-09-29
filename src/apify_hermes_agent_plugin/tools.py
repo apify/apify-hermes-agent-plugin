@@ -316,7 +316,9 @@ _DISCOVER_SCHEMA: dict[str, Any] = {
         "Search the Apify Store for Actors by keyword, or fetch an Actor's "
         "input schema and README. Provide 'query' to search, or 'actor_id' "
         'to inspect a specific Actor. Actor IDs accept either the unique ID '
-        'or the username~actor-name format.'
+        'or the username~actor-name format. For common scraping tasks, call '
+        "skill_view(name='apify:actor-routing') first for curated Actor picks "
+        'before searching.'
     ),
     'parameters': {
         'type': 'object',
