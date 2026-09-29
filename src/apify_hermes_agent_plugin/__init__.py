@@ -15,6 +15,7 @@ from apify_hermes_agent_plugin.tools import (
     discover_handler_str,
     start_handler_str,
 )
+from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider
 
 _TOOLS = (
     ('apify_discover', _DISCOVER_SCHEMA, discover_handler_str, '🔍', False),
@@ -26,7 +27,10 @@ _ACTOR_ROUTING_SKILL_PATH = Path(__file__).parent / 'skills' / 'actor-routing' /
 
 
 def register(ctx: Any) -> None:
-    """Register the three Apify Actor tools. Called once by the Hermes plugin loader."""
+    """Register the Apify Actor tools, web search provider, actor-routing skill, and CLI setup command.
+
+    Called once by the Hermes plugin loader.
+    """
     for name, schema, handler, emoji, is_async in _TOOLS:
         ctx.register_tool(
             name=name,
@@ -46,6 +50,8 @@ def register(ctx: Any) -> None:
         handler_fn=apify_setup_command,
         description=('Prompt for (or accept via --token) your APIFY_API_TOKEN and save it to ~/.hermes/.env.'),
     )
+
+    ctx.register_web_search_provider(ApifyWebSearchProvider())
 
     ctx.register_skill(
         name='actor-routing',

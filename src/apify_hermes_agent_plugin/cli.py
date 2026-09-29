@@ -30,7 +30,10 @@ def apify_setup_command(args: argparse.Namespace) -> int:
     if token is not None:
         token = token.strip()
     else:
-        print('Set your Apify API token (get one at https://apify.com/account/integrations).')
+        print(
+            'Set your Apify API token '
+            '(get one at https://console.apify.com/settings/integrations?utm_source=hermes-agent&utm_medium=integrations).'
+        )
         token = getpass.getpass(f'{_ENV_KEY}: ').strip()
 
     if not token:

@@ -9,6 +9,8 @@ provides_tools:
   - apify_discover
   - apify_start
   - apify_collect
+provides_web_providers:
+  - apify
 provides_hooks: []
 requires_env:
   - name: APIFY_API_TOKEN
