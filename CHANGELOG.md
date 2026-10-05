@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.5) (2026-10-05)
+
+### 🚀 Features
+
+- Add actor-routing skill for Hermes Agent ([#8](https://github.com/apify/apify-hermes-agent-plugin/pull/8)) ([1ac1fea](https://github.com/apify/apify-hermes-agent-plugin/commit/1ac1feab7ad65ffdd5b14f7bc5ed6d13b709a461)) by [@JanHranicky](https://github.com/JanHranicky)
+- Web fetch ([#14](https://github.com/apify/apify-hermes-agent-plugin/pull/14)) ([591992a](https://github.com/apify/apify-hermes-agent-plugin/commit/591992a12fb4e22abd42ee62af4028fccc95aaac)) by [@JanHranicky](https://github.com/JanHranicky)
+
+### 🐛 Bug Fixes
+
+- Move dev deps out of pyproject so Hermes can enable the plugin ([#17](https://github.com/apify/apify-hermes-agent-plugin/pull/17)) ([d1fb3ef](https://github.com/apify/apify-hermes-agent-plugin/commit/d1fb3efec3eb05d3bde747c7df83cd2cce2812bd)) by [@JanHranicky](https://github.com/JanHranicky)
+
+
 ## [0.1.4](https://github.com/apify/apify-hermes-agent-plugin/releases/tag/v0.1.4) (2026-09-18)
 
 ### 🐛 Bug Fixes
