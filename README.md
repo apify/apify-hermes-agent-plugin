@@ -58,7 +58,7 @@ or select `apify` interactively via `hermes tools`.
 
 ## Development
 
-    pip install -e ".[dev]"
+    pip install -r requirements-dev.txt
     pytest
 
 ### Releasing

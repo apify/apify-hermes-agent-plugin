@@ -5,7 +5,7 @@
 Python 3.11–3.13. Clone the repo, then install in editable mode with the dev extras:
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements-dev.txt
 ```
 
 ## Running checks
