@@ -11,7 +11,7 @@ execution as three tools (`apify_discover`, `apify_start`, `apify_collect`) plus
 ## Commands
 
 ```bash
-pip install -e ".[dev]"        # editable install with dev deps
+pip install -r requirements-dev.txt   # editable install with dev deps
 pytest                          # run all tests
 pytest tests/test_tools.py::test_name -v   # run a single test
 ruff check .                    # lint
@@ -105,6 +105,14 @@ instruction), since these are private hermes_cli internals with no stability gua
   `[tool.setuptools]`.
 - `version` in `pyproject.toml` is a static string, but never bump it by hand — the release
   pipeline's `changelog_update` job bumps it for you. See [Release process](#release-process).
+- `version` in `plugin.yaml` (what `hermes plugins list` shows for git/catalog installs) is
+  **not** bumped by the pipeline — set it by hand to the version you're about to release.
+- Dev tooling lives in `requirements-dev.txt`, never in `pyproject.toml`'s
+  `[project.optional-dependencies]` or `[dependency-groups]`. Hermes' plugin manager locks an
+  installed plugin into its own uv workspace *including every extra and group*, so a dev pin
+  that disagrees with Hermes' exact dev pins (e.g. `pytest==9.0.2` vs `9.1.1`) gets the plugin
+  refused at enable time ("not admitted"). `hermes plugins validate --install-deps` does not
+  catch this — it only resolves runtime requirements.
 
 ## Release process
 

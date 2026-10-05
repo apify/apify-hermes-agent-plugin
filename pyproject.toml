@@ -29,9 +29,6 @@ dependencies = [
     "httpx>=0.27",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest==9.0.2", "pytest-asyncio==1.3.0", "ruff>=0.15.20,<0.17", "ty>=0.0.65,<0.1"]
-
 [project.urls]
 "Homepage" = "https://github.com/apify/apify-hermes-agent-plugin"
 "Source Code" = "https://github.com/apify/apify-hermes-agent-plugin"

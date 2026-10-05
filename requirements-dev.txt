@@ -1,0 +1,9 @@
+# Dev tooling lives here, not in pyproject.toml's optional-dependencies / dependency-groups:
+# Hermes Agent's plugin manager locks an installed plugin into its own uv workspace together
+# with every extra and dependency group it declares, so any dev pin that disagrees with
+# Hermes' own exact dev pins (e.g. pytest) makes the plugin fail admission ("not admitted").
+-e .
+pytest==9.0.2
+pytest-asyncio==1.3.0
+ruff>=0.15.20,<0.17
+ty>=0.0.65,<0.1
