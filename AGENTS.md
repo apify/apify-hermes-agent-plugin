@@ -5,8 +5,17 @@ Guidance for AI coding agents working in this repository.
 ## What this is
 
 A [Hermes Agent](https://hermes-agent.nousresearch.com) plugin that exposes Apify Actor
-execution as three tools (`apify_discover`, `apify_start`, `apify_collect`) plus a
-`hermes apify-setup` CLI command. Published to PyPI as `apify-hermes-agent-plugin`.
+execution as three tools (`apify_discover`, `apify_start`, `apify_collect`), an `apify`
+web search/extract provider (`web_search.py`), an `actor-routing` skill
+(`skills/actor-routing/SKILL.md`), and a `hermes apify-setup` CLI command.
+
+It ships through **two channels**, and both must keep working:
+
+1. **PyPI**, as `apify-hermes-agent-plugin`. It's loaded via the `hermes_agent.plugins`
+   entry point (see below).
+2. **The Hermes plugin catalog ("marketplace")**, via `hermes plugins install apify`. Hermes
+   git-clones this repo at a pinned commit and imports the root `__init__.py` shim. See
+   [Hermes plugin catalog](#hermes-plugin-catalog-marketplace-listing).
 
 ## Commands
 
@@ -149,11 +158,136 @@ own bundled `cliff.toml` (not a file in this repo — there is nothing to config
 It only treats `feat`/`fix`/`perf`/`revert`, breaking-marked (`!:`) `docs`/`refactor`/
 `style`/`test`/`build`/`chore`/`ci`, and commits whose body mentions "security" as
 release-worthy. A plain `chore:`/`ci:`/`docs:`/etc. commit (no `!`) is silently skipped —
-it neither appears in the changelog nor counts toward an `auto` bump.
+it neither appears in the changelog nor counts toward an `auto` bump. On `0.x` versions
+that `cliff.toml` sets `features_always_bump_minor = false`, so even `feat:` commits only
+bump the **patch** number. Dispatching `patch` gives the same version as `auto` would.
 
 **Requires** the `APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN` org secret (received via `secrets:
 inherit`) — `changelog_update`'s push to `main` authenticates as that service account, not
 the job's default `GITHUB_TOKEN`.
+
+## Hermes plugin catalog (marketplace listing)
+
+The listing is one file, `plugin-catalog/apify.yaml`, in
+[NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent). It pins an exact
+commit of this repo. Releasing here does **not** update it: every SHA bump is a new upstream
+PR that a human reviews (catalog rule 4). Rules, schema and CI live in that repo's
+`plugin-catalog/README.md` and `.github/workflows/plugin-catalog-ci.yml`. Read them at
+current `main`, because they change often.
+
+History: first listed via #114254 → #115946 (pin `07b21464`, 0.1.3). Re-pinned to v0.1.5
+(`a3a7af0c`) via #133341.
+
+### How Hermes installs it (as of Hermes `main`, 2026-10)
+
+- `hermes plugins install apify` clones this repo at the pinned SHA into
+  `$HERMES_HOME/plugins/apify`. Its package manager then puts the plugin into **Hermes' own
+  uv workspace**, and enabling it re-locks that workspace.
+- That lock resolves **every extra and dependency group** the plugin's `pyproject.toml`
+  declares, together with Hermes' exact-pinned dev group. A conflicting pin means the plugin
+  is "not admitted": it installs, but enabling it is refused. That's why dev tooling lives in
+  `requirements-dev.txt` (see [Packaging](#packaging)).
+- The `hermes-agent` requirement is stripped on purpose ("the application checkout supplies
+  Hermes itself"). Current Hermes reports its own version as `0.0.0`, because the real version
+  comes from an install stamp. So `hermes-agent>=0.15.1` is a no-op for catalog installs, but
+  a raw `pip install` into a current Hermes environment would pull the stale PyPI
+  `hermes-agent==0.19.0` (PyPI stopped at 0.19.0).
+- **Who runs this code:** the official `install.sh` clones Hermes `main`, and `hermes update`
+  defaults to `--branch main`. Tagged releases (v0.21.4/v0.21.5) don't have the
+  package-manager admission step yet. So test against Hermes **`main`**, not the latest tag:
+  that's what new users get.
+- By-name installs read the **live** catalog JSON
+  (`hermes-agent.nousresearch.com/docs/api/plugin-catalog.json`, built by
+  `website/scripts/extract-plugins.py`), not the files in a Hermes checkout. A merged re-pin
+  reaches users only after the docs site redeploys.
+
+### Re-pin procedure
+
+1. Merge the change, then dispatch `publish` with **`patch`**. Before releasing, make sure
+   `plugin.yaml`'s `version` equals the version about to ship, because catalog rule 14 says
+   "version matches the pinned code".
+2. Pin the **release commit**, the `chore(release)` commit that `changelog_update` pushes
+   (`git rev-parse vX.Y.Z^{commit}`). Don't pin the feature/fix commit, whose
+   `pyproject.toml` still has the old version.
+3. Edit only `plugin-catalog/apify.yaml`:
+   - `sha` → the release commit (full 40 hex characters).
+   - `version: "X.Y.Z"` (quoted).
+   - `image:` → `https://raw.githubusercontent.com/apify/apify-hermes-agent-plugin/<sha>/assets/banner.png`.
+     That's the 2000×1000 (2:1) banner, which must be on a GitHub host, pinned to the same SHA.
+     It only appears if `image:` is set; the docs site uses it for the card, the
+     `/docs/plugins/apify` hero image and `og:image`.
+   - `title: Apify`: the display name in Hermes' own catalog list. The docs site ignores it.
+   - Under `capabilities`, only `provides_tools`, `provides_hooks`, `provides_middleware` and
+     `requires_env` are recognised. Don't add the web provider or the skill there; unknown
+     keys produce a warning.
+4. Open the PR **from a personal fork** (`<login>/hermes-agent`), branched from
+   `upstream/main`. Leave "Allow edits by maintainers" on.
+   - GitHub never allows maintainer edits on PRs from **organization-owned** forks
+     (`apify/hermes-agent`), and Hermes maintainers often fix catalog PRs themselves. With
+     #114254 they couldn't push, so they re-opened it as their own PR. Org forks are
+     accepted otherwise, but every requested change then has to be pushed by us.
+   - **Commit email must be mapped**, or the `Contributor Attribution Check` fails. GitHub
+     noreply emails resolve automatically; otherwise add `contributors/emails/<email>`
+     containing the GitHub login, in the same PR (catalog CI allows changes under that path).
+   - Rule 5: the submitter must be the repo owner or a major contributor. Say you're
+     submitting for Apify as a maintainer of this repo.
+5. Title convention for re-pins: `chore(plugin-catalog): repin apify to <sha8> (X.Y.Z)`.
+   Description: use the upstream PR template, and include:
+   - old → new SHA;
+   - why the bump is needed;
+   - what changed in this repo between the two pins (reviewers read that commit range,
+     rule 4);
+   - a **Disclosure** section (rule 13: network calls to `api.apify.com` /
+     `web-fetch.apify.actor` with the user's token, Actor runs billed to their Apify account,
+     `apify-setup` writing `$HERMES_HOME/.env` and enabling the toolset, the
+     `x-apify-integration-platform` header);
+   - concrete test steps with results.
+
+   A disclosure line inside the entry's `description` is optional; reviewers may add one.
+6. Workflows on fork PRs wait for a maintainer to approve them, so `action_required` with no
+   checks running is normal. Re-pins typically merge within about a day; a bot comments
+   "Verified at …" first.
+
+Likely reviewer requests we haven't addressed yet:
+- Rule 10: bare dependency floors get a request for an upper bound, and `httpx>=0.27` has none.
+- Rule 13: the disclosure should also be in the README.
+
+### Verifying a pin before opening the PR
+
+Do these in this order, using a Hermes checkout at upstream `main` and a **fresh, throwaway
+`HERMES_HOME`** for each step:
+
+1. `python3 scripts/validate_plugin_catalog.py plugin-catalog/` in the Hermes checkout, with
+   the edited entry.
+2. Clone this repo, `git checkout --detach <sha>`, then
+   `hermes plugins validate --install-deps <clone>`. This is what catalog CI runs.
+   - It **only resolves runtime requirements**, so it passed even when the `[dev]` extra made
+     the plugin impossible to enable. Don't treat it as proof of installability.
+3. Install and enable for real:
+   `hermes plugins install apify/apify-hermes-agent-plugin --ref <sha> --enable`, answering `y`
+   to the dependency prompt.
+   - Check that `hermes plugins list` shows `apify │ enabled │ X.Y.Z` and that the next
+     `hermes` run resyncs cleanly.
+   - In a non-interactive shell the dependency prompt is skipped and the plugin stays
+     disabled. Hermes supports `--yes-deps` internally but doesn't expose it on the command
+     line yet; use a pseudo-terminal (`script`) to answer.
+4. `hermes apify-setup --token …`, then exercise the tools, the web provider
+   (`search()`/`extract()`) and the skill from inside Hermes' Python environment.
+5. `curl` the pinned `image:` URL and expect HTTP 200 `image/png`.
+
+Gotchas from doing this:
+- `validate --install-deps` leaves a staged copy of the validated directory in that
+  `HERMES_HOME`. A later enable in the same home fails with
+  `Distribution not found at …/plugin-sources/<dir>-…`. That comes from the test setup, not
+  the plugin: use a separate home.
+- A Hermes **dev** checkout's `scripts/run-in-hermes-env` also syncs the test environment.
+  Users' runtime installs don't, so don't mistake test-environment failures for user-facing
+  ones (the `[dev]` failure did reproduce with `setup-hermes.sh --runtime-only`).
+- Upstream Hermes can't be `pip install`ed from source any more (wheel builds are refused). Use
+  `install.sh` or `setup-hermes.sh`.
+- macOS has no `timeout` command, so drop the `timeout 600` wrappers that catalog CI uses.
+- An older global `hermes` (e.g. v0.21.4) has no admission step. Running it against a scratch
+  `HERMES_HOME` gives misleadingly positive results.
 
 ## Ruff configuration — rules turned off for real design reasons
 
