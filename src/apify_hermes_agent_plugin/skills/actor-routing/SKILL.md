@@ -150,6 +150,7 @@ before, or need its input schema.
 | Actor | Tier | Best for |
 |-------|------|----------|
 | apify~google-search-scraper | apify | SERP, ads, AI overviews |
+| apify~web-search | apify | fast organic results (one page) |
 | apify~google-trends-scraper | apify | trend data |
 | tri_angle~bing-search-scraper | apify | Bing SERP data |
 
