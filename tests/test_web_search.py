@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import json
 
 import httpx
 import pytest
@@ -11,14 +11,32 @@ from apify_hermes_agent_plugin.web_search import ApifyWebSearchProvider
 
 
 @pytest.fixture
-def mock_client(monkeypatch):
-    """Patch get_apify_client to return a MagicMock client."""
-    client = MagicMock()
-    monkeypatch.setattr(
-        'apify_hermes_agent_plugin.web_search.get_apify_client',
-        lambda: client,
-    )
-    return client
+def mock_search(monkeypatch):
+    """Route every sync httpx.Client search() creates through a MockTransport; return the request log."""
+
+    def _install(handler):
+        requests: list[httpx.Request] = []
+
+        def _record(request):
+            requests.append(request)
+            return handler(request)
+
+        transport = httpx.MockTransport(_record)
+        # Same trick as mock_web_fetch below: capture the real class before patching it.
+        real_client = httpx.Client
+        monkeypatch.setattr(
+            'apify_hermes_agent_plugin.web_search.httpx.Client',
+            lambda *a, **kw: real_client(*a, transport=transport, **kw),
+        )
+        return requests
+
+    return _install
+
+
+@pytest.fixture(autouse=True)
+def no_search_env_defaults(monkeypatch):
+    """Default: no APIFY_WEB_SEARCH_* overrides are configured."""
+    monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_hermes_env', lambda name: '', raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -82,30 +100,33 @@ def test_get_setup_schema_includes_token_env_var():
     )
 
 
-def test_search_returns_normalized_results(mock_client):
-    run = MagicMock()
-    run.id = 'run_1'
-    mock_client.actor.return_value.start.return_value = run
+_SEARCH_URL = 'https://api.apify.com/v2/acts/apify~web-search/run-sync-get-dataset-items'
 
-    finished_run = MagicMock()
-    finished_run.status = 'SUCCEEDED'
-    finished_run.default_dataset_id = 'dataset_1'
-    mock_client.run.return_value.wait_for_finish.return_value = finished_run
 
-    dataset_result = MagicMock()
-    dataset_result.items = [
-        {
-            'searchResult': {
-                'title': 'Apify',
-                'url': 'https://apify.com',
-                'description': 'Web scraping and automation platform',
-            }
-        },
-    ]
-    mock_client.dataset.return_value.list_items.return_value = dataset_result
+def _search_item(*results):
+    """Build the single dataset item apify~web-search returns, holding ``results``."""
+    return {'query': 'apify', 'search': {'provider': 'google'}, 'results': list(results)}
 
-    provider = ApifyWebSearchProvider()
-    result = provider.search('apify', limit=5)
+
+def test_search_returns_normalized_results(mock_search):
+    requests = mock_search(
+        lambda request: httpx.Response(
+            201,
+            json=[
+                _search_item(
+                    {
+                        'title': 'Apify',
+                        'url': 'https://apify.com',
+                        'snippet': 'Web scraping and automation platform',
+                        'position': 1,
+                        'domain': 'apify.com',
+                    }
+                )
+            ],
+        )
+    )
+
+    result = ApifyWebSearchProvider().search('apify', limit=5)
 
     assert result == {
         'success': True,
@@ -120,125 +141,148 @@ def test_search_returns_normalized_results(mock_client):
             ]
         },
     }
-    mock_client.actor.assert_called_once_with('apify~rag-web-browser')
-    mock_client.actor.return_value.start.assert_called_once_with(
-        run_input={'query': 'apify', 'maxResults': 5, 'requestTimeoutSecs': 60}
-    )
-    mock_client.run.assert_called_once_with('run_1')
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == 'POST'
+    assert str(request.url) == _SEARCH_URL
+    assert request.headers['Authorization'] == 'Bearer tok_123'
+    assert request.headers['x-apify-integration-platform'] == 'hermes-agent'
+    assert json.loads(request.content) == {'query': 'apify', 'maxResults': 5}
 
 
-def test_search_clamps_limit_above_actor_max(mock_client):
-    run = MagicMock()
-    run.id = 'run_1'
-    mock_client.actor.return_value.start.return_value = run
-
-    finished_run = MagicMock()
-    finished_run.status = 'SUCCEEDED'
-    finished_run.default_dataset_id = 'dataset_1'
-    mock_client.run.return_value.wait_for_finish.return_value = finished_run
-
-    dataset_result = MagicMock()
-    dataset_result.items = []
-    mock_client.dataset.return_value.list_items.return_value = dataset_result
+def test_search_clamps_limit_above_one_results_page(mock_search):
+    requests = mock_search(lambda request: httpx.Response(201, json=[_search_item()]))
 
     ApifyWebSearchProvider().search('apify', limit=250)
 
-    mock_client.actor.return_value.start.assert_called_once_with(
-        run_input={'query': 'apify', 'maxResults': 100, 'requestTimeoutSecs': 60}
-    )
+    assert json.loads(requests[0].content)['maxResults'] == 10
 
 
-def test_search_clamps_limit_below_actor_min(mock_client):
-    run = MagicMock()
-    run.id = 'run_1'
-    mock_client.actor.return_value.start.return_value = run
-
-    finished_run = MagicMock()
-    finished_run.status = 'SUCCEEDED'
-    finished_run.default_dataset_id = 'dataset_1'
-    mock_client.run.return_value.wait_for_finish.return_value = finished_run
-
-    dataset_result = MagicMock()
-    dataset_result.items = []
-    mock_client.dataset.return_value.list_items.return_value = dataset_result
+def test_search_clamps_limit_below_actor_min(mock_search):
+    requests = mock_search(lambda request: httpx.Response(201, json=[_search_item()]))
 
     ApifyWebSearchProvider().search('apify', limit=0)
 
-    mock_client.actor.return_value.start.assert_called_once_with(
-        run_input={'query': 'apify', 'maxResults': 1, 'requestTimeoutSecs': 60}
+    assert json.loads(requests[0].content)['maxResults'] == 1
+
+
+def test_search_caps_returned_results_at_limit(mock_search):
+    items = [{'title': f'T{i}', 'url': f'https://example.com/{i}', 'snippet': 's'} for i in range(5)]
+    mock_search(lambda request: httpx.Response(201, json=[_search_item(*items)]))
+
+    result = ApifyWebSearchProvider().search('q', limit=2)
+
+    assert [r['url'] for r in result['data']['web']] == ['https://example.com/0', 'https://example.com/1']
+    assert [r['position'] for r in result['data']['web']] == [1, 2]
+
+
+def test_search_passes_country_and_language_defaults_from_env(monkeypatch, mock_search):
+    env = {'APIFY_WEB_SEARCH_COUNTRY': 'DE', 'APIFY_WEB_SEARCH_LANGUAGE': 'de'}
+    monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_hermes_env', lambda name: env.get(name, ''))
+    requests = mock_search(lambda request: httpx.Response(201, json=[_search_item()]))
+
+    ApifyWebSearchProvider().search('apify', limit=5)
+
+    assert json.loads(requests[0].content) == {
+        'query': 'apify',
+        'maxResults': 5,
+        'countryCode': 'DE',
+        'languageCode': 'de',
+    }
+
+
+def test_search_truncates_long_snippets(mock_search):
+    mock_search(
+        lambda request: httpx.Response(
+            201, json=[_search_item({'title': 'T', 'url': 'https://example.com', 'snippet': 'x' * 600})]
+        )
     )
-
-
-def test_search_truncates_long_descriptions(mock_client):
-    run = MagicMock()
-    run.id = 'run_1'
-    mock_client.actor.return_value.start.return_value = run
-
-    finished_run = MagicMock()
-    finished_run.status = 'SUCCEEDED'
-    finished_run.default_dataset_id = 'dataset_1'
-    mock_client.run.return_value.wait_for_finish.return_value = finished_run
-
-    long_description = 'x' * 600
-    dataset_result = MagicMock()
-    dataset_result.items = [
-        {'searchResult': {'title': 'T', 'url': 'https://example.com', 'description': long_description}},
-    ]
-    mock_client.dataset.return_value.list_items.return_value = dataset_result
 
     result = ApifyWebSearchProvider().search('q')
 
     assert len(result['data']['web'][0]['description']) == 500
 
 
-def test_search_returns_error_on_failed_run(mock_client):
-    run = MagicMock()
-    run.id = 'run_1'
-    mock_client.actor.return_value.start.return_value = run
+def test_search_tolerates_missing_and_malformed_fields(mock_search):
+    mock_search(
+        lambda request: httpx.Response(
+            201,
+            json=[_search_item('not a dict', {'url': 'https://example.com', 'title': None, 'snippet': 42})],
+        )
+    )
 
-    finished_run = MagicMock()
-    finished_run.status = 'FAILED'
-    finished_run.default_dataset_id = None
-    mock_client.run.return_value.wait_for_finish.return_value = finished_run
+    result = ApifyWebSearchProvider().search('q')
+
+    assert result == {
+        'success': True,
+        'data': {'web': [{'title': '', 'url': 'https://example.com', 'description': '', 'position': 1}]},
+    }
+
+
+@pytest.mark.parametrize('body', [[], [{}], [{'results': None}], [{'results': 5}], ['not a dict']])
+def test_search_returns_empty_list_when_no_results(mock_search, body):
+    mock_search(lambda request: httpx.Response(201, json=body))
+
+    result = ApifyWebSearchProvider().search('q')
+
+    assert result == {'success': True, 'data': {'web': []}}
+
+
+def test_search_returns_error_on_http_error_with_apify_error_body(mock_search):
+    mock_search(
+        lambda request: httpx.Response(
+            402, json={'error': {'type': 'not-enough-usage-to-run-paid-actor', 'message': 'Not enough credit'}}
+        )
+    )
 
     result = ApifyWebSearchProvider().search('apify')
 
-    assert result == {'success': False, 'error': 'Apify search run ended with status: FAILED'}
+    assert result == {'success': False, 'error': 'Apify search failed with status 402: Not enough credit'}
 
 
-def test_search_returns_error_on_wait_for_finish_timeout(mock_client):
-    run = MagicMock()
-    run.id = 'run_1'
-    mock_client.actor.return_value.start.return_value = run
-    mock_client.run.return_value.wait_for_finish.return_value = None
+def test_search_returns_error_on_http_error_with_non_json_body(mock_search):
+    mock_search(lambda request: httpx.Response(502, text='<html>Bad Gateway</html>'))
 
     result = ApifyWebSearchProvider().search('apify')
 
-    assert result == {'success': False, 'error': 'Apify search timed out after 90s'}
+    assert result == {'success': False, 'error': 'Apify search failed with status 502'}
 
 
-def test_search_returns_error_when_interrupted(monkeypatch, mock_client):
+def test_search_returns_error_on_non_list_body(mock_search):
+    mock_search(lambda request: httpx.Response(201, json={'unexpected': True}))
+
+    result = ApifyWebSearchProvider().search('apify')
+
+    assert result == {'success': False, 'error': 'Apify search failed: unexpected response body'}
+
+
+def test_search_returns_error_on_timeout(mock_search):
+    def raise_timeout(request):
+        raise httpx.ReadTimeout('timed out', request=request)
+
+    mock_search(raise_timeout)
+
+    result = ApifyWebSearchProvider().search('apify')
+
+    assert result == {'success': False, 'error': 'Apify search failed: timed out'}
+
+
+def test_search_returns_error_when_interrupted(monkeypatch, mock_search):
     monkeypatch.setattr('tools.interrupt.is_interrupted', lambda: True)
+    requests = mock_search(lambda request: httpx.Response(201, json=[]))
 
     result = ApifyWebSearchProvider().search('apify')
 
     assert result == {'success': False, 'error': 'Interrupted'}
-    mock_client.actor.assert_not_called()
+    assert requests == []
 
 
-def test_search_returns_error_on_exception(mock_client):
-    mock_client.actor.side_effect = RuntimeError('boom')
-
-    result = ApifyWebSearchProvider().search('apify')
-
-    assert result == {'success': False, 'error': 'Apify search failed: boom'}
-
-
-def test_search_returns_error_when_client_unavailable(monkeypatch):
+def test_search_returns_error_when_token_unavailable(monkeypatch, mock_search):
     def raise_value_error():
         raise ValueError('Apify tools are not configured. Set APIFY_API_TOKEN.')
 
-    monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_apify_client', raise_value_error)
+    monkeypatch.setattr('apify_hermes_agent_plugin.web_search.get_apify_api_token', raise_value_error)
+    requests = mock_search(lambda request: httpx.Response(201, json=[]))
 
     result = ApifyWebSearchProvider().search('apify')
 
@@ -246,6 +290,7 @@ def test_search_returns_error_when_client_unavailable(monkeypatch):
         'success': False,
         'error': 'Apify search failed: Apify tools are not configured. Set APIFY_API_TOKEN.',
     }
+    assert requests == []
 
 
 @pytest.mark.asyncio

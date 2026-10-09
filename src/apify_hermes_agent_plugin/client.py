@@ -17,34 +17,39 @@ _CLIENT: Any | None = None
 _CLIENT_CONFIG: Any | None = None
 
 
-def _resolve_apify_api_token() -> str:
-    """Resolve APIFY_API_TOKEN across hermes-agent versions.
+def get_hermes_env(name: str) -> str:
+    """Resolve a Hermes env var (``os.environ`` or ``~/.hermes/.env``) across hermes-agent versions.
 
     Prefers ``agent.web_search_provider.get_provider_env`` (hermes-agent
     >=0.18.1): it checks ``os.environ`` first, then reads ``~/.hermes/.env``
     directly, which matters because gateway sessions, delegate children, and
-    subprocess agent runs don't always have the token exported into the
-    process environment even though `hermes apify-setup` persisted it.  Falls
-    back to ``hermes_cli.config.get_env_value`` (same resolution order,
-    available since 0.15.2 — our declared floor) on older hermes-agent, and
-    to a bare ``os.getenv`` as a last resort if hermes_cli's internals are
-    ever unavailable or change shape.
+    subprocess agent runs don't always have the value exported into the
+    process environment even though it was persisted (e.g. by
+    `hermes apify-setup`).  Falls back to ``hermes_cli.config.get_env_value``
+    (same resolution order, available since 0.15.2 — our declared floor) on
+    older hermes-agent, and to a bare ``os.getenv`` as a last resort if
+    hermes_cli's internals are ever unavailable or change shape.
     """
     try:
         from agent.web_search_provider import get_provider_env
 
-        return get_provider_env('APIFY_API_TOKEN')
+        return get_provider_env(name)
     except Exception as exc:  # BLE001 ignored repo-wide — degrade to the next fallback
         logger.debug('get_provider_env unavailable (hermes-agent likely predates 0.18.1): %s', exc)
 
     try:
         from hermes_cli.config import get_env_value
 
-        return (get_env_value('APIFY_API_TOKEN') or '').strip()
+        return (get_env_value(name) or '').strip()
     except Exception as exc:  # BLE001 ignored repo-wide — hermes_cli internals have no stability guarantee
         logger.debug('hermes_cli.config.get_env_value unavailable: %s', exc)
 
-    return os.getenv('APIFY_API_TOKEN', '').strip()
+    return os.getenv(name, '').strip()
+
+
+def _resolve_apify_api_token() -> str:
+    """Resolve APIFY_API_TOKEN across hermes-agent versions (see ``get_hermes_env``)."""
+    return get_hermes_env('APIFY_API_TOKEN')
 
 
 def check_apify_api_key() -> bool:
