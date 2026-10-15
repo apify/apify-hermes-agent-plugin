@@ -166,3 +166,14 @@ def test_resolve_token_falls_back_to_bare_os_getenv(monkeypatch):
     from apify_hermes_agent_plugin.client import _resolve_apify_api_token
 
     assert _resolve_apify_api_token() == 'tok_from_bare_env'
+
+
+def test_get_hermes_env_resolves_arbitrary_keys_through_the_same_chain(monkeypatch):
+    import agent.web_search_provider as wsp
+
+    monkeypatch.setattr(wsp, 'get_provider_env', lambda name: {'APIFY_WEB_SEARCH_COUNTRY': 'DE'}.get(name, ''))
+
+    from apify_hermes_agent_plugin.client import get_hermes_env
+
+    assert get_hermes_env('APIFY_WEB_SEARCH_COUNTRY') == 'DE'
+    assert get_hermes_env('APIFY_WEB_SEARCH_LANGUAGE') == ''
