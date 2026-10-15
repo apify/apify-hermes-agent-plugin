@@ -18,12 +18,10 @@ from apify_hermes_agent_plugin.client import (
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_ACTOR = 'apify~web-search'
-# One synchronous request: starts the run, waits for it, and returns its dataset items.
-_SEARCH_URL = f'https://api.apify.com/v2/acts/{_SEARCH_ACTOR}/run-sync-get-dataset-items'
-_SEARCH_TIMEOUT_SECS = 90  # a Google results page is fast; this is headroom for a cold Actor start
+_WEB_SEARCH_URL = 'https://web-search.apify.actor/'
+_SEARCH_TIMEOUT_SECS = 90  # apify/web-search's own 60s search budget + headroom for a Standby cold start
 _MAX_DESCRIPTION_CHARS = 500
-_MAX_RESULTS = 10  # apify~web-search scrapes a single Google results page, which holds ~10 organic results
+_MAX_RESULTS = 10  # apify/web-search scrapes a single Google results page, which holds ~10 organic results
 # Optional install-wide search defaults. Hermes only hands search() a query and a limit, so the
 # agent can't pick these per call; unset means the Actor's own defaults (US / en).
 _SEARCH_ENV_INPUTS = {'APIFY_WEB_SEARCH_COUNTRY': 'countryCode', 'APIFY_WEB_SEARCH_LANGUAGE': 'languageCode'}
@@ -31,11 +29,11 @@ _WEB_FETCH_URL = 'https://web-fetch.apify.actor/'
 _FETCH_TIMEOUT_SECS = 600
 # apify/web-fetch itself is fast once warm (see plan's Global Constraints); this is generous
 # headroom for a rare Standby cold start + a slow page.
-_HTTP_ERROR_STATUS = 400  # smallest HTTP status code treated as a failure (Apify API and apify/web-fetch)
+_HTTP_ERROR_STATUS = 400  # smallest HTTP status code that apify/web-search and apify/web-fetch treat as a failure
 
 
 class ApifyWebSearchProvider(WebSearchProvider):
-    """Apify web search backend — runs apify~web-search for search and apify/web-fetch for extract."""
+    """Apify web search backend — calls the apify/web-search and apify/web-fetch Standby Actors."""
 
     @property
     def name(self) -> str:
@@ -60,7 +58,7 @@ class ApifyWebSearchProvider(WebSearchProvider):
         return True
 
     def search(self, query: str, limit: int = 5) -> dict[str, Any]:
-        """Run apify~web-search synchronously and return normalized web search results."""
+        """Search via the apify/web-search Standby Actor and return normalized web search results."""
         from tools.interrupt import is_interrupted
 
         if is_interrupted():
@@ -75,20 +73,20 @@ class ApifyWebSearchProvider(WebSearchProvider):
                     run_input[input_key] = value
             headers = {'Authorization': f'Bearer {get_apify_api_token()}'}
             with httpx.Client(timeout=_SEARCH_TIMEOUT_SECS, headers=_HERMES_HEADERS) as client:
-                response = client.post(_SEARCH_URL, json=run_input, headers=headers)
+                response = client.post(_WEB_SEARCH_URL, json=run_input, headers=headers)
             if response.status_code >= _HTTP_ERROR_STATUS:
-                message = _parse_apify_api_error(response)
+                message = _parse_standby_error(response, 'Apify search failed')
                 logger.warning('Apify web search failed for %r: %s', query, message)
                 return {'success': False, 'error': message}
-            items = response.json()
+            body = response.json()
         except Exception as exc:  # BLE001 ignored repo-wide — report to the caller, never raise
             logger.warning('Apify web search error for %r: %s', query, exc)
             return {'success': False, 'error': f'Apify search failed: {exc}'}
 
-        if not isinstance(items, list):
+        if not isinstance(body, dict):
             return {'success': False, 'error': 'Apify search failed: unexpected response body'}
 
-        return {'success': True, 'data': {'web': _normalize_results(items, clamped_limit)}}
+        return {'success': True, 'data': {'web': _normalize_results(body, clamped_limit)}}
 
     async def extract(self, urls: list[str], **kwargs: Any) -> list[dict[str, Any]]:
         """Fetch one or more URLs via the apify/web-fetch Standby Actor."""
@@ -157,14 +155,10 @@ class ApifyWebSearchProvider(WebSearchProvider):
         }
 
 
-def _normalize_results(items: list[Any], limit: int) -> list[dict[str, Any]]:
-    """Normalize apify~web-search dataset items to the web_search_registry shape.
-
-    The Actor returns one item per search, holding the organic hits in ``results``.
-    """
-    hits = [hit for item in items if isinstance(item, dict) for hit in _coerce_list(item.get('results'))]
+def _normalize_results(body: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    """Normalize an apify/web-search response's organic ``results`` to the web_search_registry shape."""
     results: list[dict[str, Any]] = []
-    for hit in hits:
+    for hit in _coerce_list(body.get('results')):
         if len(results) >= limit:
             break
         if not isinstance(hit, dict):
@@ -178,17 +172,6 @@ def _normalize_results(items: list[Any], limit: int) -> list[dict[str, Any]]:
             }
         )
     return results
-
-
-def _parse_apify_api_error(response: httpx.Response) -> str:
-    """Turn an Apify API error response (``{"error": {"message": ...}}``) into a message."""
-    message = f'Apify search failed with status {response.status_code}'
-    try:
-        error = _coerce_dict(_coerce_dict(response.json()).get('error'))
-    except Exception:  # non-JSON error body, e.g. an HTML 502 from a gateway
-        return message
-    detail = _coerce_str(error.get('message'))
-    return f'{message}: {detail}' if detail else message
 
 
 def _error_result(url: str, message: str, **extra: Any) -> dict[str, Any]:
@@ -227,7 +210,7 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     # Check the status before parsing: error responses aren't guaranteed to be JSON (e.g. an
     # HTML 502 from the Standby gateway), and that must still surface as a status error.
     if response.status_code >= _HTTP_ERROR_STATUS:
-        message = _parse_web_fetch_error(response)
+        message = _parse_standby_error(response, 'Apify web fetch failed')
         logger.warning('Apify web fetch failed for %r: %s', url, message)
         return _error_result(url, message)
 
@@ -269,12 +252,14 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     }
 
 
-def _parse_web_fetch_error(response: httpx.Response) -> str:
-    """Parse either of apify/web-fetch's two error response shapes into a message.
+def _parse_standby_error(response: httpx.Response, prefix: str) -> str:
+    """Parse either of the two Standby Actor error response shapes into a message.
 
-    Falls back to a generic status message when the body isn't a JSON object.
+    The Actor's own errors are ``{"error": str, "code": str}``; the Standby gateway's (e.g. a
+    missing token or no credit) are ``{"error": {"message": str}}``. Falls back to a generic
+    status message when the body isn't a JSON object.
     """
-    fallback = f'Apify web fetch failed with status {response.status_code}'
+    fallback = f'{prefix} with status {response.status_code}'
     try:
         body = response.json()
     except Exception:  # non-JSON error body
