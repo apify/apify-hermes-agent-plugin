@@ -235,7 +235,28 @@ def test_search_returns_error_on_http_error_with_actor_error_body(mock_search):
 
     result = ApifyWebSearchProvider().search('apify')
 
-    assert result == {'success': False, 'error': 'Search exceeded the 60s time budget. (code: SEARCH_TIMEOUT)'}
+    assert result == {
+        'success': False,
+        'error': 'Apify search failed with status 504: Search exceeded the 60s time budget. (code: SEARCH_TIMEOUT)',
+    }
+
+
+@pytest.mark.parametrize(
+    ('code', 'env_name'),
+    [('INVALID_COUNTRY', 'APIFY_WEB_SEARCH_COUNTRY'), ('INVALID_LANGUAGE', 'APIFY_WEB_SEARCH_LANGUAGE')],
+)
+def test_search_error_names_the_env_var_behind_an_invalid_input(mock_search, code, env_name):
+    mock_search(lambda request: httpx.Response(400, json={'code': code, 'error': 'Bad value.'}))
+
+    result = ApifyWebSearchProvider().search('apify')
+
+    assert result == {
+        'success': False,
+        'error': (
+            f'Apify search failed with status 400: Bad value. (code: {code}) '
+            f'Fix or unset {env_name} in your Hermes environment (~/.hermes/.env).'
+        ),
+    }
 
 
 def test_search_returns_error_on_http_error_with_standby_gateway_error_body(mock_search):
@@ -247,7 +268,7 @@ def test_search_returns_error_on_http_error_with_standby_gateway_error_body(mock
 
     result = ApifyWebSearchProvider().search('apify')
 
-    assert result == {'success': False, 'error': 'Not enough credit'}
+    assert result == {'success': False, 'error': 'Apify search failed with status 402: Not enough credit'}
 
 
 def test_search_returns_error_on_http_error_with_non_json_body(mock_search):

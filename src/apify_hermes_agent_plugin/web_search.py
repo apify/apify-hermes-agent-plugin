@@ -25,6 +25,12 @@ _MAX_RESULTS = 10  # apify/web-search scrapes a single Google results page, whic
 # Optional install-wide search defaults. Hermes only hands search() a query and a limit, so the
 # agent can't pick these per call; unset means the Actor's own defaults (US / en).
 _SEARCH_ENV_INPUTS = {'APIFY_WEB_SEARCH_COUNTRY': 'countryCode', 'APIFY_WEB_SEARCH_LANGUAGE': 'languageCode'}
+# apify/web-search error codes caused by a bad _SEARCH_ENV_INPUTS value. Its message names the
+# Actor input (e.g. "countryCode"), so point the user at the setting they actually configured.
+_INVALID_SEARCH_ENV_CODES = {
+    'INVALID_COUNTRY': 'APIFY_WEB_SEARCH_COUNTRY',
+    'INVALID_LANGUAGE': 'APIFY_WEB_SEARCH_LANGUAGE',
+}
 _WEB_FETCH_URL = 'https://web-fetch.apify.actor/'
 _FETCH_TIMEOUT_SECS = 600
 # apify/web-fetch itself is fast once warm (see plan's Global Constraints); this is generous
@@ -75,7 +81,12 @@ class ApifyWebSearchProvider(WebSearchProvider):
             with httpx.Client(timeout=_SEARCH_TIMEOUT_SECS, headers=_HERMES_HEADERS) as client:
                 response = client.post(_WEB_SEARCH_URL, json=run_input, headers=headers)
             if response.status_code >= _HTTP_ERROR_STATUS:
-                message = _parse_standby_error(response, 'Apify search failed')
+                detail = _standby_error_detail(response)
+                message = f'Apify search failed with status {response.status_code}'
+                message = f'{message}: {detail}' if detail else message
+                env_name = _INVALID_SEARCH_ENV_CODES.get(_standby_error_code(response))
+                if env_name:
+                    message = f'{message} Fix or unset {env_name} in your Hermes environment (~/.hermes/.env).'
                 logger.warning('Apify web search failed for %r: %s', query, message)
                 return {'success': False, 'error': message}
             body = response.json()
@@ -210,7 +221,7 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     # Check the status before parsing: error responses aren't guaranteed to be JSON (e.g. an
     # HTML 502 from the Standby gateway), and that must still surface as a status error.
     if response.status_code >= _HTTP_ERROR_STATUS:
-        message = _parse_standby_error(response, 'Apify web fetch failed')
+        message = _standby_error_detail(response) or f'Apify web fetch failed with status {response.status_code}'
         logger.warning('Apify web fetch failed for %r: %s', url, message)
         return _error_result(url, message)
 
@@ -252,24 +263,33 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     }
 
 
-def _parse_standby_error(response: httpx.Response, prefix: str) -> str:
-    """Parse either of the two Standby Actor error response shapes into a message.
-
-    The Actor's own errors are ``{"error": str, "code": str}``; the Standby gateway's (e.g. a
-    missing token or no credit) are ``{"error": {"message": str}}``. Falls back to a generic
-    status message when the body isn't a JSON object.
-    """
-    fallback = f'{prefix} with status {response.status_code}'
+def _standby_error_code(response: httpx.Response) -> str | None:
+    """Return the Actor's own error ``code`` (e.g. ``INVALID_COUNTRY``), if the body has one."""
     try:
         body = response.json()
     except Exception:  # non-JSON error body
-        return fallback
+        return None
+    code = body.get('code') if isinstance(body, dict) else None
+    return code if isinstance(code, str) else None
+
+
+def _standby_error_detail(response: httpx.Response) -> str | None:
+    """Parse either of the two Standby Actor error response shapes into a message.
+
+    The Actor's own errors are ``{"error": str, "code": str}``; the Standby gateway's (e.g. a
+    missing token or no credit) are ``{"error": {"message": str}}``. Returns None when the
+    body matches neither, e.g. a non-JSON gateway error page.
+    """
+    try:
+        body = response.json()
+    except Exception:  # non-JSON error body
+        return None
     if not isinstance(body, dict):
-        return fallback
+        return None
 
     error = body.get('error')
     if isinstance(error, str) and isinstance(body.get('code'), str):
         return f'{error} (code: {body["code"]})'
     if isinstance(error, dict) and isinstance(error.get('message'), str):
         return error['message']
-    return fallback
+    return None

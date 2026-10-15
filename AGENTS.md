@@ -238,9 +238,9 @@ History: first listed via #114254 → #115946 (pin `07b21464`, 0.1.3). Re-pinned
    - what changed in this repo between the two pins (reviewers read that commit range,
      rule 4);
    - a **Disclosure** section (rule 13: network calls to `api.apify.com` /
-     `web-fetch.apify.actor` with the user's token, Actor runs billed to their Apify account,
-     `apify-setup` writing `$HERMES_HOME/.env` and enabling the toolset, the
-     `x-apify-integration-platform` header);
+     `web-search.apify.actor` / `web-fetch.apify.actor` with the user's token, Actor runs
+     billed to their Apify account, `apify-setup` writing `$HERMES_HOME/.env` and enabling
+     the toolset, the `x-apify-integration-platform` header);
    - concrete test steps with results.
 
    A disclosure line inside the entry's `description` is optional; reviewers may add one.
