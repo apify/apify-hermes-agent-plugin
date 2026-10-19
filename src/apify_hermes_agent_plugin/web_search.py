@@ -81,12 +81,13 @@ class ApifyWebSearchProvider(WebSearchProvider):
             with httpx.Client(timeout=_SEARCH_TIMEOUT_SECS, headers=_HERMES_HEADERS) as client:
                 response = client.post(_WEB_SEARCH_URL, json=run_input, headers=headers)
             if response.status_code >= _HTTP_ERROR_STATUS:
-                detail = _standby_error_detail(response)
+                error_body = _parse_error_body(response)
+                detail = _standby_error_detail(error_body)
                 message = f'Apify search failed with status {response.status_code}'
                 message = f'{message}: {detail}' if detail else message
-                env_name = _INVALID_SEARCH_ENV_CODES.get(_standby_error_code(response))
+                env_name = _INVALID_SEARCH_ENV_CODES.get(_standby_error_code(error_body))
                 if env_name:
-                    message = f'{message} Fix or unset {env_name} in your Hermes environment (~/.hermes/.env).'
+                    message = f'{message}. Fix or unset {env_name} in your Hermes environment (~/.hermes/.env).'
                 logger.warning('Apify web search failed for %r: %s', query, message)
                 return {'success': False, 'error': message}
             body = response.json()
@@ -174,10 +175,14 @@ def _normalize_results(body: dict[str, Any], limit: int) -> list[dict[str, Any]]
             break
         if not isinstance(hit, dict):
             continue
+        # A hit without a URL can't be opened or cited, so don't let it take a result slot.
+        url = _coerce_str(hit.get('url'))
+        if not url:
+            continue
         results.append(
             {
                 'title': _coerce_str(hit.get('title')),
-                'url': _coerce_str(hit.get('url')),
+                'url': url,
                 'description': _coerce_str(hit.get('snippet'))[:_MAX_DESCRIPTION_CHARS],
                 'position': len(results) + 1,
             }
@@ -221,7 +226,8 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     # Check the status before parsing: error responses aren't guaranteed to be JSON (e.g. an
     # HTML 502 from the Standby gateway), and that must still surface as a status error.
     if response.status_code >= _HTTP_ERROR_STATUS:
-        message = _standby_error_detail(response) or f'Apify web fetch failed with status {response.status_code}'
+        detail = _standby_error_detail(_parse_error_body(response))
+        message = detail or f'Apify web fetch failed with status {response.status_code}'
         logger.warning('Apify web fetch failed for %r: %s', url, message)
         return _error_result(url, message)
 
@@ -263,27 +269,27 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     }
 
 
-def _standby_error_code(response: httpx.Response) -> str | None:
-    """Return the Actor's own error ``code`` (e.g. ``INVALID_COUNTRY``), if the body has one."""
+def _parse_error_body(response: httpx.Response) -> Any:
+    """Return an error response's parsed JSON body, or None if it isn't JSON."""
     try:
-        body = response.json()
-    except Exception:  # non-JSON error body
+        return response.json()
+    except Exception:  # non-JSON error body, e.g. a gateway HTML page
         return None
+
+
+def _standby_error_code(body: Any) -> str | None:
+    """Return the Actor's own error ``code`` (e.g. ``INVALID_COUNTRY``), if the body has one."""
     code = body.get('code') if isinstance(body, dict) else None
     return code if isinstance(code, str) else None
 
 
-def _standby_error_detail(response: httpx.Response) -> str | None:
+def _standby_error_detail(body: Any) -> str | None:
     """Parse either of the two Standby Actor error response shapes into a message.
 
     The Actor's own errors are ``{"error": str, "code": str}``; the Standby gateway's (e.g. a
     missing token or no credit) are ``{"error": {"message": str}}``. Returns None when the
-    body matches neither, e.g. a non-JSON gateway error page.
+    body matches neither, e.g. a non-JSON gateway error page (parsed as None).
     """
-    try:
-        body = response.json()
-    except Exception:  # non-JSON error body
-        return None
     if not isinstance(body, dict):
         return None
 

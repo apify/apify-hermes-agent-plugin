@@ -217,6 +217,26 @@ def test_search_tolerates_missing_and_malformed_fields(mock_search):
     }
 
 
+def test_search_skips_hits_without_a_url(mock_search):
+    mock_search(
+        lambda request: httpx.Response(
+            200,
+            json=_search_body(
+                {'title': 'No URL', 'snippet': 's'},
+                {'url': '', 'title': 'Empty URL'},
+                {'url': 'https://example.com', 'title': 'Kept', 'snippet': 'ok'},
+            ),
+        )
+    )
+
+    result = ApifyWebSearchProvider().search('q', limit=1)
+
+    assert result == {
+        'success': True,
+        'data': {'web': [{'title': 'Kept', 'url': 'https://example.com', 'description': 'ok', 'position': 1}]},
+    }
+
+
 @pytest.mark.parametrize('body', [{}, {'results': None}, {'results': 5}])
 def test_search_returns_empty_list_when_no_results(mock_search, body):
     mock_search(lambda request: httpx.Response(200, json=body))
@@ -253,7 +273,7 @@ def test_search_error_names_the_env_var_behind_an_invalid_input(mock_search, cod
     assert result == {
         'success': False,
         'error': (
-            f'Apify search failed with status 400: Bad value. (code: {code}) '
+            f'Apify search failed with status 400: Bad value. (code: {code}). '
             f'Fix or unset {env_name} in your Hermes environment (~/.hermes/.env).'
         ),
     }
