@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -14,25 +13,33 @@ from apify_hermes_agent_plugin.client import (
     _HERMES_HEADERS,
     check_apify_api_key,
     get_apify_api_token,
-    get_apify_client,
+    get_hermes_env,
 )
-from apify_hermes_agent_plugin.tools import _attr
 
 logger = logging.getLogger(__name__)
 
-_RAG_ACTOR = 'apify~rag-web-browser'
+_WEB_SEARCH_URL = 'https://web-search.apify.actor/'
+_SEARCH_TIMEOUT_SECS = 90  # apify/web-search's own 60s search budget + headroom for a Standby cold start
 _MAX_DESCRIPTION_CHARS = 500
-_SEARCH_WAIT_SECS = 90  # 60s request timeout + startup headroom
-_MAX_RESULTS = 100  # apify~rag-web-browser's maxResults input schema bound (min 1, max 100)
+_MAX_RESULTS = 10  # apify/web-search scrapes a single Google results page, which holds ~10 organic results
+# Optional install-wide search defaults. Hermes only hands search() a query and a limit, so the
+# agent can't pick these per call; unset means the Actor's own defaults (US / en).
+_SEARCH_ENV_INPUTS = {'APIFY_WEB_SEARCH_COUNTRY': 'countryCode', 'APIFY_WEB_SEARCH_LANGUAGE': 'languageCode'}
+# apify/web-search error codes caused by a bad _SEARCH_ENV_INPUTS value. Its message names the
+# Actor input (e.g. "countryCode"), so point the user at the setting they actually configured.
+_INVALID_SEARCH_ENV_CODES = {
+    'INVALID_COUNTRY': 'APIFY_WEB_SEARCH_COUNTRY',
+    'INVALID_LANGUAGE': 'APIFY_WEB_SEARCH_LANGUAGE',
+}
 _WEB_FETCH_URL = 'https://web-fetch.apify.actor/'
 _FETCH_TIMEOUT_SECS = 600
 # apify/web-fetch itself is fast once warm (see plan's Global Constraints); this is generous
 # headroom for a rare Standby cold start + a slow page.
-_HTTP_ERROR_STATUS = 400  # smallest HTTP status code that apify/web-fetch treats as a failure
+_HTTP_ERROR_STATUS = 400  # smallest HTTP status code that apify/web-search and apify/web-fetch treat as a failure
 
 
 class ApifyWebSearchProvider(WebSearchProvider):
-    """Apify web search backend — runs the apify~rag-web-browser Actor."""
+    """Apify web search backend — calls the apify/web-search and apify/web-fetch Standby Actors."""
 
     @property
     def name(self) -> str:
@@ -57,7 +64,7 @@ class ApifyWebSearchProvider(WebSearchProvider):
         return True
 
     def search(self, query: str, limit: int = 5) -> dict[str, Any]:
-        """Run apify~rag-web-browser and return normalized web search results."""
+        """Search via the apify/web-search Standby Actor and return normalized web search results."""
         from tools.interrupt import is_interrupted
 
         if is_interrupted():
@@ -65,24 +72,33 @@ class ApifyWebSearchProvider(WebSearchProvider):
 
         try:
             clamped_limit = max(1, min(int(limit), _MAX_RESULTS))
-            client = get_apify_client()
-            run = client.actor(_RAG_ACTOR).start(
-                run_input={'query': query, 'maxResults': clamped_limit, 'requestTimeoutSecs': 60}
-            )
-            finished = client.run(_attr(run, 'id')).wait_for_finish(wait_duration=timedelta(seconds=_SEARCH_WAIT_SECS))
-            if finished is None or _attr(finished, 'status') not in {'SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'}:
-                return {'success': False, 'error': f'Apify search timed out after {_SEARCH_WAIT_SECS}s'}
-            status = _attr(finished, 'status')
-            if status != 'SUCCEEDED':
-                return {'success': False, 'error': f'Apify search run ended with status: {status}'}
-
-            dataset_id = _attr(finished, 'default_dataset_id')
-            items = list(_attr(client.dataset(dataset_id).list_items(), 'items') or []) if dataset_id else []
+            run_input: dict[str, Any] = {'query': query, 'maxResults': clamped_limit}
+            for env_name, input_key in _SEARCH_ENV_INPUTS.items():
+                value = (get_hermes_env(env_name) or '').strip()
+                if value:
+                    run_input[input_key] = value
+            headers = {'Authorization': f'Bearer {get_apify_api_token()}'}
+            with httpx.Client(timeout=_SEARCH_TIMEOUT_SECS, headers=_HERMES_HEADERS) as client:
+                response = client.post(_WEB_SEARCH_URL, json=run_input, headers=headers)
+            if response.status_code >= _HTTP_ERROR_STATUS:
+                error_body = _parse_error_body(response)
+                detail = _standby_error_detail(error_body)
+                message = f'Apify search failed with status {response.status_code}'
+                message = f'{message}: {detail}' if detail else message
+                env_name = _INVALID_SEARCH_ENV_CODES.get(_standby_error_code(error_body))
+                if env_name:
+                    message = f'{message}. Fix or unset {env_name} in your Hermes environment (~/.hermes/.env).'
+                logger.warning('Apify web search failed for %r: %s', query, message)
+                return {'success': False, 'error': message}
+            body = response.json()
         except Exception as exc:  # BLE001 ignored repo-wide — report to the caller, never raise
             logger.warning('Apify web search error for %r: %s', query, exc)
             return {'success': False, 'error': f'Apify search failed: {exc}'}
 
-        return {'success': True, 'data': {'web': _normalize_results(items, clamped_limit)}}
+        if not isinstance(body, dict):
+            return {'success': False, 'error': 'Apify search failed: unexpected response body'}
+
+        return {'success': True, 'data': {'web': _normalize_results(body, clamped_limit)}}
 
     async def extract(self, urls: list[str], **kwargs: Any) -> list[dict[str, Any]]:
         """Fetch one or more URLs via the apify/web-fetch Standby Actor."""
@@ -151,21 +167,23 @@ class ApifyWebSearchProvider(WebSearchProvider):
         }
 
 
-def _normalize_results(items: list[Any], limit: int) -> list[dict[str, Any]]:
-    """Normalize apify~rag-web-browser dataset items to the web_search_registry shape."""
+def _normalize_results(body: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    """Normalize an apify/web-search response's organic ``results`` to the web_search_registry shape."""
     results: list[dict[str, Any]] = []
-    for item in items[:limit]:
-        search_result = _attr(item, 'searchResult') or {}
-        title = _attr(search_result, 'title') or _attr(item, 'title', '')
-        url = _attr(search_result, 'url') or _attr(item, 'url', '')
-        description = _attr(search_result, 'description') or _attr(item, 'markdown', '')
-        if description and len(description) > _MAX_DESCRIPTION_CHARS:
-            description = description[:_MAX_DESCRIPTION_CHARS]
+    for hit in _coerce_list(body.get('results')):
+        if len(results) >= limit:
+            break
+        if not isinstance(hit, dict):
+            continue
+        # A hit without a URL can't be opened or cited, so don't let it take a result slot.
+        url = _coerce_str(hit.get('url'))
+        if not url:
+            continue
         results.append(
             {
-                'title': title,
+                'title': _coerce_str(hit.get('title')),
                 'url': url,
-                'description': description,
+                'description': _coerce_str(hit.get('snippet'))[:_MAX_DESCRIPTION_CHARS],
                 'position': len(results) + 1,
             }
         )
@@ -191,6 +209,11 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _coerce_list(value: Any) -> list[Any]:
+    """Return value if it's a list, else an empty list."""
+    return value if isinstance(value, list) else []
+
+
 def _coerce_str(value: Any, default: str = '') -> str:
     """Return value if it's a str, else default."""
     return value if isinstance(value, str) else default
@@ -203,7 +226,8 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     # Check the status before parsing: error responses aren't guaranteed to be JSON (e.g. an
     # HTML 502 from the Standby gateway), and that must still surface as a status error.
     if response.status_code >= _HTTP_ERROR_STATUS:
-        message = _parse_web_fetch_error(response)
+        detail = _standby_error_detail(_parse_error_body(response))
+        message = detail or f'Apify web fetch failed with status {response.status_code}'
         logger.warning('Apify web fetch failed for %r: %s', url, message)
         return _error_result(url, message)
 
@@ -245,22 +269,33 @@ def _build_fetch_result(url: str, response: httpx.Response, formats: list[str]) 
     }
 
 
-def _parse_web_fetch_error(response: httpx.Response) -> str:
-    """Parse either of apify/web-fetch's two error response shapes into a message.
-
-    Falls back to a generic status message when the body isn't a JSON object.
-    """
-    fallback = f'Apify web fetch failed with status {response.status_code}'
+def _parse_error_body(response: httpx.Response) -> Any:
+    """Return an error response's parsed JSON body, or None if it isn't JSON."""
     try:
-        body = response.json()
-    except Exception:  # non-JSON error body
-        return fallback
+        return response.json()
+    except Exception:  # non-JSON error body, e.g. a gateway HTML page
+        return None
+
+
+def _standby_error_code(body: Any) -> str | None:
+    """Return the Actor's own error ``code`` (e.g. ``INVALID_COUNTRY``), if the body has one."""
+    code = body.get('code') if isinstance(body, dict) else None
+    return code if isinstance(code, str) else None
+
+
+def _standby_error_detail(body: Any) -> str | None:
+    """Parse either of the two Standby Actor error response shapes into a message.
+
+    The Actor's own errors are ``{"error": str, "code": str}``; the Standby gateway's (e.g. a
+    missing token or no credit) are ``{"error": {"message": str}}``. Returns None when the
+    body matches neither, e.g. a non-JSON gateway error page (parsed as None).
+    """
     if not isinstance(body, dict):
-        return fallback
+        return None
 
     error = body.get('error')
     if isinstance(error, str) and isinstance(body.get('code'), str):
         return f'{error} (code: {body["code"]})'
     if isinstance(error, dict) and isinstance(error.get('message'), str):
         return error['message']
-    return fallback
+    return None

@@ -68,9 +68,12 @@ picks for common scraping tasks. The agent loads it before searching Apify Store
 ## Web search & fetch
 
 This plugin also registers `apify` as a Hermes Agent web search and web-fetch backend,
-running the [RAG Web Browser](https://apify.com/apify/rag-web-browser) Actor for search and
+running the [Web Search](https://apify.com/apify/web-search) Actor for search and
 the [Web Fetch](https://apify.com/apify/web-fetch) Actor for content extraction. Both use the
 same `APIFY_API_TOKEN` configured above - no separate setup needed.
+
+Search returns Google organic results (title, URL, and snippet) from a single results page,
+so you get up to 10 results per query. Use extract (Web Fetch) for full page content.
 
 To use them, set the search and/or extract backend in `~/.hermes/config.yaml`:
 
@@ -79,6 +82,12 @@ To use them, set the search and/or extract backend in `~/.hermes/config.yaml`:
       extract_backend: apify
 
 or select `apify` interactively via `hermes tools`.
+
+Searches run as if issued from the US in English by default. To change that for every search,
+set these optional variables in `~/.hermes/.env` (or the environment):
+
+    APIFY_WEB_SEARCH_COUNTRY=DE   # ISO 3166-1 alpha-2 country code
+    APIFY_WEB_SEARCH_LANGUAGE=de  # ISO 639-1 language code
 
 ## Development
 
