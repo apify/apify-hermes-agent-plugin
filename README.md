@@ -60,7 +60,8 @@ Then run `hermes apify-setup` as above - it still takes care of enabling the too
 
 - `apify_discover` - search Apify Store by keyword, or fetch an Actor's input schema + README by `actor_id`.
 - `apify_start` - fire-and-forget batch Actor starts (up to 10 per call).
-- `apify_collect` - poll run statuses and return completed dataset results.
+- `apify_collect` - poll run statuses and return completed dataset items as JSON. Large
+  results are split into pages the agent fetches with `offset`.
 
 The plugin also ships an `actor-routing` skill (`apify:actor-routing`) with curated Actor
 picks for common scraping tasks. The agent loads it before searching Apify Store.

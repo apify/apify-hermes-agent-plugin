@@ -425,73 +425,164 @@ class TestCollectNonTerminal:
 
 
 # ---------------------------------------------------------------------------
-# apify_collect — succeeded path + external content wrapping
+# apify_collect — succeeded path, output shape, size cap and paging
 # ---------------------------------------------------------------------------
+
+# Hermes' default per-result threshold: a tool result longer than this is saved to a file and the
+# model only sees a ~1.5K-char preview of it (tools/budget_config.py::DEFAULT_RESULT_SIZE_CHARS).
+_HERMES_RESULT_SIZE_CHARS = 100_000
+
+
+def _ref(n=1, **extra):
+    return {'run_id': f'r{n}', 'actor_id': 'apify~test', 'dataset_id': f'd{n}', **extra}
+
+
+def _succeed_with_items(mock_client, items_by_dataset):
+    """Make every run SUCCEEDED and serve each dataset's items from `items_by_dataset`."""
+    mock_client.run.return_value.get.return_value = MagicMock(status='SUCCEEDED')
+    datasets = {
+        dataset_id: MagicMock(list_items=MagicMock(return_value=MagicMock(items=items)))
+        for dataset_id, items in items_by_dataset.items()
+    }
+    mock_client.dataset.side_effect = datasets.__getitem__
+    return datasets
 
 
 class TestCollectSucceeded:
     @pytest.mark.asyncio
-    async def test_succeeded_fetches_dataset_and_wraps_content(self, mock_client):
-        run_info = MagicMock()
-        run_info.status = 'SUCCEEDED'
-        mock_client.run.return_value.get.return_value = run_info
-
+    async def test_succeeded_fetches_dataset_items(self, mock_client):
         items = [{'title': 'Result 1', 'url': 'https://example.com'}]
-        dataset_result = MagicMock()
-        dataset_result.items = items
-        mock_client.dataset.return_value.list_items.return_value = dataset_result
+        datasets = _succeed_with_items(mock_client, {'d1': items})
 
-        from apify_hermes_agent_plugin.tools import _collect_handler
+        from apify_hermes_agent_plugin.tools import _COLLECT_DEFAULT_LIMIT, _collect_handler
 
-        result = await _collect_handler({'runs': [{'run_id': 'r1', 'actor_id': 'apify~test', 'dataset_id': 'd1'}]})
+        result = await _collect_handler({'runs': [_ref()]})
 
         assert result['all_done'] is True
         assert len(result['completed']) == 1
         c = result['completed'][0]
         assert c['status'] == 'SUCCEEDED'
         assert c['result_count'] == 1
-        assert '<<<EXTERNAL_UNTRUSTED_CONTENT>>>' in c['data']
-        assert '<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>' in c['data']
-        assert 'Result 1' in c['data']
-        from apify_hermes_agent_plugin.tools import _COLLECT_DEFAULT_LIMIT
-
-        mock_client.dataset.return_value.list_items.assert_called_once_with(limit=_COLLECT_DEFAULT_LIMIT)
-        mock_client.dataset.assert_called_once_with('d1')
+        assert c['data'] == items
+        assert 'truncated' not in c
+        datasets['d1'].list_items.assert_called_once_with(offset=0, limit=_COLLECT_DEFAULT_LIMIT)
 
     @pytest.mark.asyncio
-    async def test_dataset_content_truncated_at_50000_chars(self, mock_client):
-        run_info = MagicMock()
-        run_info.status = 'SUCCEEDED'
-        mock_client.run.return_value.get.return_value = run_info
+    async def test_tool_output_parses_as_plain_json(self, mock_client):
+        # Regression test for #23: `data` used to be a JSON *string* wrapped in
+        # <<<EXTERNAL_UNTRUSTED_CONTENT>>> markers, so json.loads() on it failed.
+        items = [{'title': 'Result 1', 'rating': 4.5, 'tags': ['a', 'b']}, {'title': 'Result 2'}]
+        _succeed_with_items(mock_client, {'d1': items})
 
-        # Create items whose JSON serialization exceeds 50k chars
-        items = [{'data': 'x' * 1000} for _ in range(100)]
-        dataset_result = MagicMock()
-        dataset_result.items = items
-        mock_client.dataset.return_value.list_items.return_value = dataset_result
+        from apify_hermes_agent_plugin.tools import collect_handler_str
 
-        from apify_hermes_agent_plugin.tools import _collect_handler
+        output = await collect_handler_str({'runs': [_ref()]})
 
-        result = await _collect_handler({'runs': [{'run_id': 'r1', 'actor_id': 'apify~test', 'dataset_id': 'd1'}]})
+        assert json.loads(output)['completed'][0]['data'] == items
+        assert 'EXTERNAL_UNTRUSTED_CONTENT' not in output
 
-        raw_data = result['completed'][0]['data']
-        # Strip markers to check truncated content length
-        content = raw_data.replace('<<<EXTERNAL_UNTRUSTED_CONTENT>>>\n', '').replace(
-            '\n<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>', ''
+    @pytest.mark.asyncio
+    async def test_tool_output_keeps_non_ascii_text_readable(self, mock_client):
+        _succeed_with_items(mock_client, {'d1': [{'name': 'Kavárna Café Praha 😀'}]})
+
+        from apify_hermes_agent_plugin.tools import collect_handler_str
+
+        output = await collect_handler_str({'runs': [_ref()]})
+
+        assert 'Kavárna Café Praha 😀' in output
+
+    @pytest.mark.asyncio
+    async def test_oversized_dataset_is_cut_between_whole_items(self, mock_client):
+        items = [{'i': i, 'text': 'x' * 1000} for i in range(100)]
+        _succeed_with_items(mock_client, {'d1': items})
+
+        from apify_hermes_agent_plugin.tools import _MAX_DATA_CHARS, _collect_handler
+
+        result = await _collect_handler({'runs': [_ref()]})
+
+        c = result['completed'][0]
+        returned = len(c['data'])
+        assert 0 < returned < len(items)
+        assert c['data'] == items[:returned]
+        assert c['result_count'] == returned
+        assert c['truncated'] is True
+        assert c['may_have_more'] is True
+        assert c['next_offset'] == returned
+        assert len(json.dumps(c['data'], ensure_ascii=False)) <= _MAX_DATA_CHARS
+
+    @pytest.mark.asyncio
+    async def test_run_ref_offset_is_forwarded_and_continued(self, mock_client):
+        items = [{'i': i, 'text': 'x' * 1000} for i in range(100)]
+        datasets = _succeed_with_items(mock_client, {'d1': items})
+
+        from apify_hermes_agent_plugin.tools import _COLLECT_DEFAULT_LIMIT, _collect_handler
+
+        result = await _collect_handler({'runs': [_ref(offset=40)]})
+
+        datasets['d1'].list_items.assert_called_once_with(offset=40, limit=_COLLECT_DEFAULT_LIMIT)
+        c = result['completed'][0]
+        assert c['next_offset'] == 40 + len(c['data'])
+
+    @pytest.mark.asyncio
+    async def test_many_large_runs_stay_under_hermes_result_threshold(self, mock_client):
+        from apify_hermes_agent_plugin.tools import _MAX_BATCH_RUNS, collect_handler_str
+
+        refs = [_ref(n) for n in range(1, _MAX_BATCH_RUNS + 1)]
+        _succeed_with_items(
+            mock_client,
+            {ref['dataset_id']: [{'i': i, 'text': 'é' * 1000} for i in range(100)] for ref in refs},
         )
-        assert '[…truncated]' in content
-        assert len(content) <= 50_000 + len('\n\n[…truncated]')
+
+        output = await collect_handler_str({'runs': refs})
+
+        assert len(output) < _HERMES_RESULT_SIZE_CHARS
+        completed = json.loads(output)['completed']
+        assert len(completed) == _MAX_BATCH_RUNS
+        assert all(c['data'] and c['may_have_more'] for c in completed)
+
+    @pytest.mark.asyncio
+    async def test_small_run_leaves_unused_budget_to_large_run(self, mock_client):
+        small = [{'name': 'only item'}]
+        large = [{'i': i, 'text': 'x' * 1000} for i in range(100)]
+        _succeed_with_items(mock_client, {'d1': small, 'd2': large})
+
+        from apify_hermes_agent_plugin.tools import _MAX_DATA_CHARS, _collect_handler
+
+        result = await _collect_handler({'runs': [_ref(1), _ref(2)]})
+
+        small_run, large_run = result['completed']
+        assert small_run['data'] == small
+        assert 'truncated' not in small_run
+        # An even split would cap the large run at half the budget.
+        assert len(json.dumps(large_run['data'])) > _MAX_DATA_CHARS * 0.9
+
+    @pytest.mark.asyncio
+    async def test_single_oversized_item_has_long_strings_shortened(self, mock_client):
+        item = {'url': 'https://example.com', 'content': {'pages': ['y' * 200_000]}}
+        _succeed_with_items(mock_client, {'d1': [item]})
+
+        from apify_hermes_agent_plugin.tools import _MAX_DATA_CHARS, _collect_handler
+
+        result = await _collect_handler({'runs': [_ref()]})
+
+        c = result['completed'][0]
+        assert c['result_count'] == 1
+        returned = c['data'][0]
+        assert returned['url'] == 'https://example.com'
+        page = returned['content']['pages'][0]
+        assert page.startswith('yyyy')
+        assert '…[truncated' in page
+        assert len(json.dumps(c['data'], ensure_ascii=False)) <= _MAX_DATA_CHARS
+        assert c['truncated'] is True
+        assert 'may_have_more' not in c  # the dataset held just this one item
 
     @pytest.mark.asyncio
     async def test_all_done_true_when_only_succeeded(self, mock_client):
-        run_info = MagicMock()
-        run_info.status = 'SUCCEEDED'
-        mock_client.run.return_value.get.return_value = run_info
-        mock_client.dataset.return_value.list_items.return_value = MagicMock(items=[])
+        _succeed_with_items(mock_client, {'d1': []})
 
         from apify_hermes_agent_plugin.tools import _collect_handler
 
-        result = await _collect_handler({'runs': [{'run_id': 'r1', 'actor_id': 'apify~test', 'dataset_id': 'd1'}]})
+        result = await _collect_handler({'runs': [_ref()]})
 
         assert result['all_done'] is True
         assert result['pending'] == []
@@ -500,46 +591,35 @@ class TestCollectSucceeded:
     async def test_may_have_more_set_when_result_count_equals_limit(self, mock_client):
         from apify_hermes_agent_plugin.tools import _COLLECT_DEFAULT_LIMIT, _collect_handler
 
-        run_info = MagicMock()
-        run_info.status = 'SUCCEEDED'
-        mock_client.run.return_value.get.return_value = run_info
-        items = [{'i': i} for i in range(_COLLECT_DEFAULT_LIMIT)]
-        mock_client.dataset.return_value.list_items.return_value = MagicMock(items=items)
+        _succeed_with_items(mock_client, {'d1': [{'i': i} for i in range(_COLLECT_DEFAULT_LIMIT)]})
 
-        result = await _collect_handler({'runs': [{'run_id': 'r1', 'actor_id': 'apify~test', 'dataset_id': 'd1'}]})
+        result = await _collect_handler({'runs': [_ref()]})
 
-        assert result['completed'][0].get('may_have_more') is True
+        c = result['completed'][0]
+        assert c.get('may_have_more') is True
+        assert c['next_offset'] == _COLLECT_DEFAULT_LIMIT
+        assert 'truncated' not in c
 
     @pytest.mark.asyncio
     async def test_may_have_more_absent_when_under_limit(self, mock_client):
-        run_info = MagicMock()
-        run_info.status = 'SUCCEEDED'
-        mock_client.run.return_value.get.return_value = run_info
-        mock_client.dataset.return_value.list_items.return_value = MagicMock(items=[{'i': 0}])
+        _succeed_with_items(mock_client, {'d1': [{'i': 0}]})
 
         from apify_hermes_agent_plugin.tools import _collect_handler
 
-        result = await _collect_handler({'runs': [{'run_id': 'r1', 'actor_id': 'apify~test', 'dataset_id': 'd1'}]})
+        result = await _collect_handler({'runs': [_ref()]})
 
         assert 'may_have_more' not in result['completed'][0]
+        assert 'next_offset' not in result['completed'][0]
 
     @pytest.mark.asyncio
     async def test_custom_limit_forwarded_to_sdk(self, mock_client):
-        run_info = MagicMock()
-        run_info.status = 'SUCCEEDED'
-        mock_client.run.return_value.get.return_value = run_info
-        mock_client.dataset.return_value.list_items.return_value = MagicMock(items=[])
+        datasets = _succeed_with_items(mock_client, {'d1': []})
 
         from apify_hermes_agent_plugin.tools import _collect_handler
 
-        await _collect_handler(
-            {
-                'runs': [{'run_id': 'r1', 'actor_id': 'apify~test', 'dataset_id': 'd1'}],
-                'limit': 500,
-            }
-        )
+        await _collect_handler({'runs': [_ref()], 'limit': 500})
 
-        mock_client.dataset.return_value.list_items.assert_called_once_with(limit=500)
+        datasets['d1'].list_items.assert_called_once_with(offset=0, limit=500)
 
 
 # ---------------------------------------------------------------------------
