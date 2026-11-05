@@ -577,6 +577,64 @@ class TestCollectSucceeded:
         assert 'may_have_more' not in c  # the dataset held just this one item
 
     @pytest.mark.asyncio
+    async def test_oversized_item_keeps_most_of_the_budget(self, mock_client):
+        _succeed_with_items(mock_client, {'d1': [{'text': 't' * 60_000}]})
+
+        from apify_hermes_agent_plugin.tools import _MAX_DATA_CHARS, _collect_handler
+
+        result = await _collect_handler({'runs': [_ref()]})
+
+        size = len(json.dumps(result['completed'][0]['data'], ensure_ascii=False))
+        assert _MAX_DATA_CHARS * 0.95 < size <= _MAX_DATA_CHARS
+
+    @pytest.mark.asyncio
+    async def test_item_that_does_not_fit_its_share_is_deferred_whole(self, mock_client):
+        """In a batch, an item too big for its run's share is never shortened (issue #23 follow-up).
+
+        It's deferred to a later page instead: `next_offset` stays put, so it isn't skipped.
+        """
+        from apify_hermes_agent_plugin.tools import _MAX_BATCH_RUNS, _collect_handler
+
+        refs = [_ref(n) for n in range(1, _MAX_BATCH_RUNS + 1)]
+        pages = [{'i': i, 'text': 'w' * 8000} for i in range(5)]
+        _succeed_with_items(mock_client, {ref['dataset_id']: pages for ref in refs})
+
+        result = await _collect_handler({'runs': refs})
+
+        completed = result['completed']
+        assert all(item['text'] == 'w' * 8000 for c in completed for item in c['data'])
+        assert any(c['data'] for c in completed)
+        deferred = [c for c in completed if not c['data']]
+        assert deferred
+        for c in deferred:
+            assert c['may_have_more'] is True
+            assert c['next_offset'] == 0
+            assert c['collect_alone'] is True
+
+        alone = await _collect_handler({'runs': [_ref(int(deferred[0]['run_id'].removeprefix('r')))]})
+        assert alone['completed'][0]['data'] == pages
+
+    @pytest.mark.asyncio
+    async def test_oversized_item_in_batch_is_deferred_until_collected_alone(self, mock_client):
+        _succeed_with_items(mock_client, {'d1': [{'name': 'small'}], 'd2': [{'text': 'y' * 200_000}]})
+
+        from apify_hermes_agent_plugin.tools import _MAX_DATA_CHARS, _collect_handler
+
+        batch = await _collect_handler({'runs': [_ref(1), _ref(2)]})
+
+        small_run, big_run = batch['completed']
+        assert small_run['data'] == [{'name': 'small'}]
+        assert big_run['data'] == []
+        assert big_run['collect_alone'] is True
+        assert big_run['next_offset'] == 0
+
+        alone = await _collect_handler({'runs': [_ref(2)]})
+        c = alone['completed'][0]
+        assert '…[truncated' in c['data'][0]['text']
+        assert _MAX_DATA_CHARS * 0.95 < len(json.dumps(c['data'], ensure_ascii=False)) <= _MAX_DATA_CHARS
+        assert 'collect_alone' not in c
+
+    @pytest.mark.asyncio
     async def test_all_done_true_when_only_succeeded(self, mock_client):
         _succeed_with_items(mock_client, {'d1': []})
 

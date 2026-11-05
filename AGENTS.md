@@ -90,7 +90,10 @@ hermes-agent's own plugin docs example — see the comment above the entry point
    budget, because Hermes saves any tool result over 100K chars (less for small-context models)
    to a file and shows the model only a ~1.5K-char preview. The budget is spent on whole items.
    The rest is reached by paging: each run ref can carry an `offset`, and the response returns
-   `next_offset`. Only an item too large on its own gets its long strings shortened.
+   `next_offset`. When a run's next item doesn't fit its share of a multi-run budget, the run is
+   deferred (`collect_alone: true`, no items, `next_offset` unchanged) rather than cut, because
+   cut content past `next_offset` can never be fetched again. Only an item larger than the whole
+   budget, collected alone, gets its long strings shortened.
 
 ### `hermes apify-setup` (`cli.py`)
 
