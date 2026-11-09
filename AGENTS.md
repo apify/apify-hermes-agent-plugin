@@ -84,6 +84,16 @@ hermes-agent's own plugin docs example — see the comment above the entry point
    `monkeypatch.setattr("tools.interrupt.is_interrupted", ...)` after import and have it
    take effect. A top-level import binds the original function at import time, and
    monkeypatching the source module afterward wouldn't reach it.
+5. `apify_collect` returns each run's dataset items as a native JSON array in `data`.
+   Never pre-serialize it into a string or wrap it in markers: the model has to be able to
+   `json.loads()` the tool output (issue #23). One response's items share a `_MAX_DATA_CHARS`
+   budget, because Hermes saves any tool result over 100K chars (less for small-context models)
+   to a file and shows the model only a ~1.5K-char preview. The budget is spent on whole items.
+   The rest is reached by paging: each run ref can carry an `offset`, and the response returns
+   `next_offset`. When a run's next item doesn't fit its share of a multi-run budget, the run is
+   deferred (`collect_alone: true`, no items, `next_offset` unchanged) rather than cut, because
+   cut content past `next_offset` can never be fetched again. Only an item larger than the whole
+   budget, collected alone, gets its long strings shortened.
 
 ### `hermes apify-setup` (`cli.py`)
 
