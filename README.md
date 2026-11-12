@@ -19,12 +19,12 @@ Apify Store. The plugin can also power Hermes' built-in web search and page extr
   listed emails."
 - **Instagram trends:** "Find up to 20 recent Instagram posts tagged #skincare and summarize the
   products they mention."
-- **TikTok trends:** "Find up to 20 popular TikTok videos tagged #booktok and list their view counts."
+- **TikTok trends:** "Find up to 20 TikTok videos tagged #booktok and list their view counts."
 - **Product prices:** "Find up to 20 standing desks on Amazon US and list their prices and product
   links."
 - **Competitor ads:** "Get Nike's active ads from the Meta Ad Library with their ad copy and start
   dates."
-- **Video research:** "Get transcripts for these 10 YouTube videos so I can index them for search."
+- **YouTube channel stats:** "List the 10 latest videos from a YouTube channel with their view counts."
 - **Website content for RAG:** "Crawl docs.example.com and give me clean Markdown I can index."
 
 For anything else, the agent searches Apify Store.
