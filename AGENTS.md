@@ -260,7 +260,6 @@ History: first listed via #114254 → #115946 (pin `07b21464`, 0.1.3). Re-pinned
 
 Likely reviewer requests we haven't addressed yet:
 - Rule 10: bare dependency floors get a request for an upper bound, and `httpx>=0.27` has none.
-- Rule 13: the disclosure should also be in the README.
 
 ### Verifying a pin before opening the PR
 
