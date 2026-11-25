@@ -145,8 +145,8 @@ Releases are cut by manually dispatching the `publish` workflow (Actions tab →
 
 `publish.yml` runs five jobs in sequence: `checks` (re-runs `test.yml` as a gate) →
 `release_prepare` (computes the version/changelog via `apify/actions/git-cliff-release`) →
-`changelog_update` (bumps `pyproject.toml` and pushes the changelog to `main`, via Apify's
-shared `python_bump_and_update_changelog.yaml` workflow) → `github_release` + `publish`
+`changelog_update` (bumps `pyproject.toml` and pushes the changelog to `main`, via the
+`apify/actions/python-bump-and-update-changelog` action) → `github_release` + `publish`
 (both build off that pushed commit; `publish` builds the sdist/wheel, smoke-tests that
 `apify_hermes_agent_plugin.register` imports and is callable, then uploads to PyPI).
 
@@ -172,8 +172,8 @@ it neither appears in the changelog nor counts toward an `auto` bump. On `0.x` v
 that `cliff.toml` sets `features_always_bump_minor = false`, so even `feat:` commits only
 bump the **patch** number. Dispatching `patch` gives the same version as `auto` would.
 
-**Requires** the `APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN` org secret (received via `secrets:
-inherit`) — `changelog_update`'s push to `main` authenticates as that service account, not
+**Requires** the `APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN` secret in the `automation` environment, which
+`changelog_update` runs in — its push to `main` authenticates as that service account, not
 the job's default `GITHUB_TOKEN`.
 
 ## Hermes plugin catalog (marketplace listing)
