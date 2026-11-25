@@ -24,6 +24,10 @@ _TOOLS = (
 )
 
 _ACTOR_ROUTING_SKILL_PATH = Path(__file__).parent / 'skills' / 'actor-routing' / 'SKILL.md'
+# The agent's skill index shows this description, not the SKILL.md frontmatter one, and Hermes
+# clips it to `skills.index_desc_limit` characters (default 60), so it must fit in 60. It names
+# the web backend setup too, so the agent loads the skill when asked to use Apify for web search.
+_ACTOR_ROUTING_SKILL_DESCRIPTION = 'Apify Actor picks by task, plus Apify web search/fetch setup'
 
 
 def register(ctx: Any) -> None:
@@ -56,5 +60,5 @@ def register(ctx: Any) -> None:
     ctx.register_skill(
         name='actor-routing',
         path=_ACTOR_ROUTING_SKILL_PATH,
-        description='Curated Actor picks for common scraping tasks — load before apify_discover.',
+        description=_ACTOR_ROUTING_SKILL_DESCRIPTION,
     )
