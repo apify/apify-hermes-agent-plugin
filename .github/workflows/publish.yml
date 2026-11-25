@@ -39,10 +39,10 @@ jobs:
     outputs:
       version_number: ${{ steps.release_prepare.outputs.version_number }}
       tag_name: ${{ steps.release_prepare.outputs.tag_name }}
-      changelog: ${{ steps.release_prepare.outputs.changelog }}
+      changelog_artifact_name: ${{ steps.release_prepare.outputs.changelog_artifact_name }}
       release_notes: ${{ steps.release_prepare.outputs.release_notes }}
     steps:
-      - uses: apify/actions/git-cliff-release@v1.5.0
+      - uses: apify/actions/git-cliff-release@v1.9.0
         name: Release prepare
         id: release_prepare
         with:
@@ -55,7 +55,7 @@ jobs:
     needs: [release_prepare]
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: automation
       deployment: false
     permissions:
       contents: write
@@ -67,7 +67,7 @@ jobs:
         uses: apify/actions/python-bump-and-update-changelog@v1.9.0
         with:
           version-number: ${{ needs.release_prepare.outputs.version_number }}
-          changelog: ${{ needs.release_prepare.outputs.changelog }}
+          changelog-artifact-name: ${{ needs.release_prepare.outputs.changelog_artifact_name }}
           apify-service-account-github-token: ${{ secrets.APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN }}
 
   github_release:
@@ -97,7 +97,7 @@ jobs:
       id-token: write
     steps:
       - name: Prepare distribution
-        uses: apify/actions/prepare-pypi-distribution@v1.5.0
+        uses: apify/actions/prepare-pypi-distribution@v1.9.0
         with:
           package_name: apify-hermes-agent-plugin
           is_prerelease: ""
@@ -109,7 +109,7 @@ jobs:
           build_command: python -m build
 
       - name: Verify built package
-        uses: apify/actions/python-package-check@v1.5.0
+        uses: apify/actions/python-package-check@v1.9.0
         with:
           package_name: apify_hermes_agent_plugin
           dist_dir: dist

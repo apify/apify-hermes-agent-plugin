@@ -172,7 +172,7 @@ it neither appears in the changelog nor counts toward an `auto` bump. On `0.x` v
 that `cliff.toml` sets `features_always_bump_minor = false`, so even `feat:` commits only
 bump the **patch** number. Dispatching `patch` gives the same version as `auto` would.
 
-**Requires** the `APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN` secret in the `pypi` environment, which
+**Requires** the `APIFY_SERVICE_ACCOUNT_GITHUB_TOKEN` secret in the `automation` environment, which
 `changelog_update` runs in — its push to `main` authenticates as that service account, not
 the job's default `GITHUB_TOKEN`.
 
