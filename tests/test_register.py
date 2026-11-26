@@ -70,7 +70,9 @@ def test_register_registers_actor_routing_skill():
     ctx.register_skill.assert_called_once()
     kwargs = ctx.register_skill.call_args.kwargs
     assert kwargs['name'] == 'actor-routing'
-    assert kwargs['description']
+    # Hermes clips skill-index descriptions to 60 characters by default (skills.index_desc_limit),
+    # so anything longer reaches the agent cut off.
+    assert 0 < len(kwargs['description']) <= 60
     # A mocked ctx never runs register_skill's real FileNotFoundError check, so verify
     # the shipped path is real ourselves — otherwise a typo'd path would pass silently.
     path = kwargs['path']
